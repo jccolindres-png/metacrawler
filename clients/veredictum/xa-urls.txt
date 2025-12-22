@@ -1,0 +1,68 @@
+# ==================================================
+# MÉXICO — FUENTES FEDERALES (PREFIJO ITU: XA)
+# ==================================================
+
+# -------------------------------
+# Poder Legislativo
+# -------------------------------
+
+# Cámara de Diputados — Leyes Federales Vigentes
+https://www.diputados.gob.mx/LeyesBiblio/index.htm
+
+
+# -------------------------------
+# Diario Oficial
+# -------------------------------
+
+# Diario Oficial de la Federación
+https://www.dof.gob.mx/
+
+
+# -------------------------------
+# Poder Judicial
+# -------------------------------
+
+# Suprema Corte de Justicia
+https://www.scjn.gob.mx/
+
+# Semanario Judicial de la Federación
+https://sjf2.scjn.gob.mx/
+
+
+# -------------------------------
+# Fiscal / Financiero
+# -------------------------------
+
+https://www.sat.gob.mx/normatividad/
+https://www.prodecon.gob.mx/
+https://www.gob.mx/cnbv/acciones-y-programas/normatividad-cnbv
+
+
+# -------------------------------
+# Laboral / Seguridad Social
+# -------------------------------
+
+https://www.gob.mx/stps/documentos/normatividad-laboral
+https://www.imss.gob.mx/patrones/normatividad
+
+
+# -------------------------------
+# Datos / Consumo
+# -------------------------------
+
+https://home.inai.org.mx/
+https://www.gob.mx/profeco/documentos/marco-juridico-profeco
+
+
+# -------------------------------
+# Agregador Jurídico
+# -------------------------------
+
+http://www.ordenjuridico.gob.mx/
+
+
+# -------------------------------
+# Academia Jurídica
+# -------------------------------
+
+https://biblio.juridicas.unam.mx/bjv

@@ -1,0 +1,192 @@
+country: ti
+name: Costa Rica
+
+sources:
+
+  - id: asamblea
+    name: Asamblea Legislativa
+    targets:
+      # Portal principal (se mantiene)
+      - id: asamblea
+        name: Asamblea Legislativa
+        url: https://www.asamblea.go.cr
+
+      # =========================
+      # SharePoint / ShareFolders
+      # =========================
+
+      # Raíz / Documentos generales
+      - id: sd_root
+        name: SharePoint – Documentos Generales
+        url: https://www.asamblea.go.cr/sd/Documents/Forms/WebFldr.aspx
+
+      # Biblioteca Digital
+      - id: sd_biblioteca_digital
+        name: SharePoint – Biblioteca Digital
+        url: https://www.asamblea.go.cr/sd/Documents/Forms/WebFldr.aspx?RootFolder=%2fsd%2fDocuments%2fBIBLIOTECADIGITAL&FolderCTID=0x01200076ABA70A0327CC408FA74B8B8B0BE44D
+
+      # Análisis
+      - id: sd_analisis
+        name: SharePoint – Análisis
+        url: https://www.asamblea.go.cr/sd/Documents/Forms/WebFldr.aspx?RootFolder=%2fsd%2fDocuments%2fanalisis&FolderCTID=0x01200076ABA70A0327CC408FA74B8B8B0BE44D
+
+      # CEDIL / Referencia
+      - id: cedil_referencia
+        name: CEDIL – Referencia
+        url: https://asamblea.go.cr/sd/referencia_cedil/Forms/AllItems.aspx
+
+      - id: cedil_consultas
+        name: CEDIL – Consultas
+        url: https://www.asamblea.go.cr/sd/consultas_cedil/Forms/AllItems.aspx
+
+      - id: cedil_temas
+        name: CEDIL – Temas de Actualidad
+        url: https://www.asamblea.go.cr/sd/temas_actualidad_cedil/Forms/AllItems.aspx
+
+      # Otras publicaciones / investigaciones
+      - id: otras_publicaciones
+        name: Otras Publicaciones
+        url: https://www.asamblea.go.cr/sd/Otras_publicaciones/Forms/AllItems.aspx
+
+      - id: investigaciones_parlamentarias
+        name: Investigaciones Parlamentarias
+        url: https://www.asamblea.go.cr/sd/invest_parlamentarias/Forms/AllItems.aspx
+
+      # Portal / Transparencia / Material didáctico
+      - id: indice_transparencia
+        name: Índice de Transparencia
+        url: https://www.asamblea.go.cr/pa/indice_transparencia/Forms/AllItems.aspx
+
+      - id: material_didactico
+        name: Material Didáctico
+        url: https://www.asamblea.go.cr/pa/Material_Didactico/Forms/AllItems.aspx
+
+      # GA – Proveedores / Organigrama
+      - id: ga_proveedores
+        name: GA – Proveedores
+        url: https://www.asamblea.go.cr/ga/proveedores/Forms/AllItems.aspx
+
+      - id: ga_organigrama
+        name: GA – Organigrama
+        url: https://www.asamblea.go.cr/ga/organigrama_mafe/Forms/AllItems.aspx
+
+      # CA / GLCP
+      - id: ca_portal
+        name: CA – Portal
+        url: https://www.asamblea.go.cr/ca/doc_portal/Forms/AllItems.aspx
+
+      - id: ca_documents
+        name: CA – Documentos
+        url: https://www.asamblea.go.cr/ca/Documents/Forms/AllItems.aspx
+
+      - id: glcp_asuntos_csj
+        name: GLCP – Asuntos CSJ
+        url: https://www.asamblea.go.cr/glcp/asuntos_csj/Forms/AllItems.aspx
+
+  - id: gaceta
+    name: Gaceta / Imprenta Nacional
+    targets:
+      - id: gaceta
+        name: Gaceta Oficial
+        url: https://www.imprentanacional.go.cr/gaceta/
+
+  - id: pgr
+    name: Procuraduría General de la República
+    targets:
+      - id: pgr_scij
+        name: SCIJ – Procuraduría General
+        url: https://www.pgr.go.cr/scij/
+
+      - id: sinalevi
+        name: SINALEVI – Sistema Nacional de Legislación Vigente
+        url: https://www.pgrweb.go.cr/scij/
+
+  - id: poder_judicial
+    name: Poder Judicial
+    targets:
+      - id: jurisprudencia
+        name: Jurisprudencia
+        url: https://juris.poder-judicial.go.cr/
+
+  - id: instituciones
+    name: Instituciones y Ministerios
+    targets:
+
+      - id: ccss
+        name: Caja Costarricense de Seguro Social
+        url: https://www.ccss.sa.cr/normativa
+
+      - id: ins
+        name: Instituto Nacional de Seguros
+        url: https://www.grupoins.com/normativa
+
+      - id: mtss
+        name: Ministerio de Trabajo y Seguridad Social
+        url: https://www.mtss.go.cr/legislacion
+
+      - id: sugef
+        name: Superintendencia General de Entidades Financieras
+        url: https://www.sugef.fi.cr/normativa
+
+      - id: supen
+        name: Superintendencia de Pensiones
+        url: https://www.supen.fi.cr/normativa
+
+      - id: sugeval
+        name: Superintendencia General de Valores
+        url: https://www.sugeval.fi.cr/normativa
+
+      - id: sugese
+        name: Superintendencia General de Seguros
+        url: https://www.sugese.fi.cr/seccion-marco-legal
+
+      - id: conassif
+        name: Consejo Nacional de Supervisión del Sistema Financiero
+        url: https://www.conassif.fi.cr/normativa
+
+      - id: mopt
+        name: Ministerio de Obras Públicas y Transportes
+        url: https://www.mopt.go.cr/
+
+      - id: minae
+        name: Ministerio de Ambiente y Energía
+        url: https://www.minae.go.cr/
+
+      - id: mep
+        name: Ministerio de Educación Pública
+        url: https://www.mep.go.cr/leyes-reglamentos
+
+      - id: salud
+        name: Ministerio de Salud
+        url: https://www.ministerio.salud.go.cr/index.php/normativa
+
+      - id: hacienda
+        name: Ministerio de Hacienda
+        url: https://www.hacienda.go.cr/contenido/normativa-tributaria
+
+      - id: cgr
+        name: Contraloría General de la República
+        url: https://www.cgr.go.cr/03-documentos/normativa/normativa.html
+
+      - id: tse
+        name: Tribunal Supremo de Elecciones
+        url: https://www.tse.go.cr/normativa.htm
+
+      - id: ice
+        name: Instituto Costarricense de Electricidad
+        url: https://www.ice.go.cr/es/normativa
+
+  - id: academia
+    name: Repositorios Académicos
+    targets:
+      - id: ucr_kerwa
+        name: UCR – Kerwa
+        url: https://www.kerwa.ucr.ac.cr/
+
+      - id: una_repositorio
+        name: UNA – Repositorio Institucional
+        url: https://repositorio.una.ac.cr/
+
+      - id: conare_kimuk
+        name: CONARE – Kimuk
+        url: https://kimuk.conare.ac.cr/

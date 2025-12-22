@@ -1,0 +1,23 @@
+# ============================================================
+# FORMATO CANÓNICO – NO MODIFICAR
+#
+# - Una entrada por país
+# - La CLAVE es el código ITU en minúscula (ej: ti, xa, us)
+# - NO usar mayúsculas en las claves
+# - NO duplicar países
+# - NO agregar variantes ni sinónimos
+# - El ISO va en MAYÚSCULA
+# - El nombre del país es solo informativo (display)
+#
+# ⚠️ Este archivo se edita MANUALMENTE
+# ⚠️ No generar automáticamente
+# ⚠️ Cualquier cambio rompe rutas y travelers
+# ============================================================
+
+ti:
+  country: Costa Rica
+  iso: CR
+
+xa:
+  country: México
+  iso: MX
