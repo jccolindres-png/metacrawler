@@ -129,7 +129,6 @@ class CrawlerManager:
     # -------------------------------------------------
 
     def run(self):
-        # 🔴 CLAVE: si el runner ya decidió fuentes, NO preguntar nada
         if hasattr(self, "sources_override"):
             sources = self.sources_override
         else:
@@ -167,7 +166,7 @@ class CrawlerManager:
         self.log(
             f"🚀 Iniciando crawling RR | cliente={self.client} país={self.country} modo={self.mode}"
         )
-        self.log(f"📦 Tareas totales: {len(tasks)}")
+        self.log(f"📦 Tareas totales: {len(self.rr.state.get('tasks', []))}")
 
         while True:
             task = self.rr.next()
@@ -184,13 +183,6 @@ class CrawlerManager:
     # -------------------------------------------------
 
     def _run_task(self, task: dict) -> str:
-        """
-        CONTRATO FORZADO:
-        - El manager normaliza el resultado
-        - Solo 'downloaded' cuenta
-        - Todo lo demás es 'skipped'
-        """
-
         source_id = task["source_id"]
         targets = task.get("targets", [])
 

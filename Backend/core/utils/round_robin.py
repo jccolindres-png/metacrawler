@@ -70,8 +70,11 @@ class RoundRobinScheduler:
         Inicializa la cola SOLO si está vacía.
 
         Acepta:
-        - {source_id, target_id}
-        - {source_id, targets: [{id: ...}, ...]}
+        - {source_id}
+        - {source_id, targets: [...]}
+
+        ❗ FIX: NO se expanden targets
+        ❗ 1 source = 1 task
         """
 
         if self.state["tasks"]:
@@ -82,25 +85,9 @@ class RoundRobinScheduler:
         for t in tasks:
             source_id = t["source_id"]
 
-            # Caso 1: tarea ya atómica
-            if "target_id" in t:
-                expanded.append(
-                    self._new_task(source_id, t.get("target_id"))
-                )
-                continue
-
-            # Caso 2: fuente con múltiples targets
-            targets = t.get("targets") or []
-            if targets:
-                for target in targets:
-                    expanded.append(
-                        self._new_task(source_id, target.get("id"))
-                    )
-            else:
-                # Fuente sin targets explícitos
-                expanded.append(
-                    self._new_task(source_id, None)
-                )
+            expanded.append(
+                self._new_task(source_id, None)
+            )
 
         self.state["tasks"] = expanded
         self.state["cursor"] = 0

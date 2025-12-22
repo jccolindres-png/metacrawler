@@ -3,6 +3,7 @@ import os
 import sys
 import argparse
 import yaml
+from urllib.parse import urlparse
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -11,7 +12,7 @@ BACKEND_DIR = os.path.abspath(os.path.join(BASE_DIR, ".."))
 if BACKEND_DIR not in sys.path:
     sys.path.insert(0, BACKEND_DIR)
 
-from classifiers.master import load_classifier
+from core.classifiers.master import load_classifier
 
 SOURCES_FILE = os.path.join(BASE_DIR, "sources.yaml")
 
@@ -29,14 +30,12 @@ def read_urls(urls_file: str):
 
     urls = []
 
-    # Formato NUEVO: sources -> targets -> url
     for src in data.get("sources", []):
         for tgt in src.get("targets", []):
             url = tgt.get("url")
             if isinstance(url, str):
                 urls.append(url)
 
-    # Formato VIEJO: sources -> base_urls
     if not urls:
         for src in data.get("sources", []):
             for url in src.get("base_urls", []):
@@ -64,16 +63,22 @@ def bootstrap(client: str, country: str | None, urls_file: str):
 
     sources = {}
 
-    # ✅ SOURCE ID CORRECTO DESDE CLASIFICADOR (NO DESDE EL NOMBRE DEL PAÍS)
-    source_id = (classifier.classify(urls[0]) or {}).get("source_id")
-
     for url in urls:
         try:
             result = classifier.classify(url) or {}
         except Exception:
             result = {}
 
+        source_id = result.get("source_id")
         subfolder = result.get("subfolder")
+
+        # 🔴 FIX CLAVE: NO colapsar trámites dentro de instituciones
+        parsed = urlparse(url)
+        if parsed.netloc == "www.tramites.go.cr":
+            source_id = "tramites"
+
+        if not source_id:
+            continue
 
         if source_id not in sources:
             sources[source_id] = {

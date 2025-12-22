@@ -165,7 +165,6 @@ def run():
         if os.path.exists(SOURCES_FILE):
             os.remove(SOURCES_FILE)
 
-        # 🔑 ENV para el subprocess (PYTHONPATH correcto)
         env = os.environ.copy()
         env["PYTHONPATH"] = BACKEND_DIR
 
@@ -200,28 +199,35 @@ def run():
             sys.exit(1)
 
         selected_sources = sources
+
         if choice == "s":
             print_menu("📦 Seleccioná fuentes", crawler_ids)
             picked = select_multiple(crawler_ids)
             if picked is None:
                 continue
-            selected_sources = sources
 
-        # ---- SUBMENÚ SOLO PARA INSTITUCIONES ----
+            selected_sources = [
+                s for s in sources
+                if s.get("id") in picked
+            ]
+
+        # ---- SUBMENÚ SOLO SI instituciones_legacy FUE SELECCIONADA ----
         for src in selected_sources:
-            if src["id"] == "instituciones":
-                urls = src.get("base_urls", [])
-                institutions = sorted({derive_institution_name(u) for u in urls})
+            if src["id"] != "instituciones_legacy":
+                continue
 
-                print("\n🏛️ Seleccioná instituciones\n")
-                chosen = select_from_columns(institutions)
-                if chosen is None:
-                    continue
+            urls = src.get("base_urls", [])
+            institutions = sorted({derive_institution_name(u) for u in urls})
 
-                src["targets"] = [
-                    u for u in urls
-                    if derive_institution_name(u) in chosen
-                ]
+            print("\n🏛️ Seleccioná instituciones\n")
+            chosen = select_from_columns(institutions)
+            if chosen is None:
+                continue
+
+            src["targets"] = [
+                u for u in urls
+                if derive_institution_name(u) in chosen
+            ]
 
         manager = CrawlerManager(
             client=client,

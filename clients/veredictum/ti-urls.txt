@@ -176,6 +176,13 @@ sources:
         name: Instituto Costarricense de Electricidad
         url: https://www.ice.go.cr/es/normativa
 
+  - id: tramites
+    name: Trámites Costa Rica
+    targets:
+      - id: tramites_cr
+        name: Portal de Trámites del Estado
+        url: https://www.tramites.go.cr
+
   - id: academia
     name: Repositorios Académicos
     targets:

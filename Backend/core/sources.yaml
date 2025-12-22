@@ -1,0 +1,70 @@
+client: veredictum
+country: ti
+sources:
+- id: asamblea
+  base_urls:
+  - https://www.asamblea.go.cr
+  - https://www.asamblea.go.cr/sd/Documents/Forms/WebFldr.aspx
+  - https://www.asamblea.go.cr/sd/Documents/Forms/WebFldr.aspx?RootFolder=%2fsd%2fDocuments%2fBIBLIOTECADIGITAL&FolderCTID=0x01200076ABA70A0327CC408FA74B8B8B0BE44D
+  - https://www.asamblea.go.cr/sd/Documents/Forms/WebFldr.aspx?RootFolder=%2fsd%2fDocuments%2fanalisis&FolderCTID=0x01200076ABA70A0327CC408FA74B8B8B0BE44D
+  - https://asamblea.go.cr/sd/referencia_cedil/Forms/AllItems.aspx
+  - https://www.asamblea.go.cr/sd/consultas_cedil/Forms/AllItems.aspx
+  - https://www.asamblea.go.cr/sd/temas_actualidad_cedil/Forms/AllItems.aspx
+  - https://www.asamblea.go.cr/sd/Otras_publicaciones/Forms/AllItems.aspx
+  - https://www.asamblea.go.cr/sd/invest_parlamentarias/Forms/AllItems.aspx
+  - https://www.asamblea.go.cr/pa/indice_transparencia/Forms/AllItems.aspx
+  - https://www.asamblea.go.cr/pa/Material_Didactico/Forms/AllItems.aspx
+  - https://www.asamblea.go.cr/ga/proveedores/Forms/AllItems.aspx
+  - https://www.asamblea.go.cr/ga/organigrama_mafe/Forms/AllItems.aspx
+  - https://www.asamblea.go.cr/ca/doc_portal/Forms/AllItems.aspx
+  - https://www.asamblea.go.cr/ca/Documents/Forms/AllItems.aspx
+  - https://www.asamblea.go.cr/glcp/asuntos_csj/Forms/AllItems.aspx
+  subfolder: null
+- id: gaceta
+  base_urls:
+  - https://www.imprentanacional.go.cr/gaceta/
+  subfolder: null
+- id: pgr
+  base_urls:
+  - https://www.pgr.go.cr/scij/
+  - https://www.pgrweb.go.cr/scij/
+  subfolder: null
+- id: poder_judicial
+  base_urls:
+  - https://juris.poder-judicial.go.cr/
+  subfolder: null
+- id: instituciones
+  base_urls:
+  - https://www.ccss.sa.cr/normativa
+  - https://www.grupoins.com/normativa
+  - https://www.mtss.go.cr/legislacion
+  - https://www.sugef.fi.cr/normativa
+  - https://www.supen.fi.cr/normativa
+  - https://www.sugeval.fi.cr/normativa
+  - https://www.sugese.fi.cr/seccion-marco-legal
+  - https://www.conassif.fi.cr/normativa
+  - https://www.mopt.go.cr/
+  - https://www.minae.go.cr/
+  - https://www.mep.go.cr/leyes-reglamentos
+  - https://www.ministerio.salud.go.cr/index.php/normativa
+  - https://www.hacienda.go.cr/contenido/normativa-tributaria
+  - https://www.cgr.go.cr/03-documentos/normativa/normativa.html
+  - https://www.tse.go.cr/normativa.htm
+  - https://www.ice.go.cr/es/normativa
+  subfolder: null
+- id: tramites
+  base_urls:
+  - https://www.tramites.go.cr
+  subfolder: null
+- id: ucr_kerwa
+  base_urls:
+  - https://www.kerwa.ucr.ac.cr/
+  subfolder: null
+- id: una_repositorio
+  base_urls:
+  - https://repositorio.una.ac.cr/
+  subfolder: null
+- id: conare_kimuk
+  base_urls:
+  - https://kimuk.conare.ac.cr/
+  subfolder: null

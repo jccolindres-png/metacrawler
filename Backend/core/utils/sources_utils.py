@@ -14,22 +14,16 @@ def load_sources(sources_file):
     for src in data.get("sources", []):
         src_id = src.get("id")
 
-        # Caso especial: instituciones se maneja como source única
-        if src_id == "instituciones":
+        # ✅ instituciones (legacy o no) se maneja como source única
+        if src_id in ("instituciones", "instituciones_legacy"):
             sources.append(src)
             continue
 
         targets = src.get("targets")
 
-        # Si tiene targets, se expanden como sources independientes
-        if targets:
-            for t in targets:
-                sources.append({
-                    "id": t.get("id"),
-                    "name": t.get("name"),
-                    "base_urls": [t.get("url")],
-                })
-        else:
-            sources.append(src)
+        # ❌ FIX CLAVE:
+        # NO expandir targets para fuentes normales (ej: tramites)
+        # Se respeta 1 source = 1 task
+        sources.append(src)
 
     return sources
