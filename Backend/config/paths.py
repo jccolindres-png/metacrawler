@@ -1,5 +1,5 @@
-import os
 from pathlib import Path
+from config.runtime import get_data_root
 
 # ==================================================
 # METACRAWLER — PATH CONFIGURATION (SINGLE SOURCE)
@@ -8,9 +8,6 @@ from pathlib import Path
 # ==================================================
 # ENV VARS (con fallback seguro)
 # ==================================================
-
-def _env(name: str, default: str) -> str:
-    return os.environ.get(name, default)
 
 # ==================================================
 # BASE PROJECT ROOT (solo código)
@@ -23,12 +20,7 @@ BACKEND_ROOT = Path(__file__).resolve().parent.parent
 # METACRAWLER DATA ROOT (ÚNICO LUGAR PARA DATOS)
 # ==================================================
 
-METACRAWLER_DATA_ROOT = Path(
-    _env(
-        "METACRAWLER_DATA_ROOT",
-        "/home/ubuntu/metacrawler/downloads"
-    )
-)
+METACRAWLER_DATA_ROOT = get_data_root()
 
 # ==================================================
 # BASE DATA DIRS

@@ -160,6 +160,34 @@ Ejecución:
 
 python runner.py
 
+## Configuración y operación segura
+
+`METACRAWLER_DATA_ROOT` es la configuración canónica y tiene prioridad sobre el
+valor predeterminado. El directorio configurado debe existir y ser escribible;
+Metacrawler falla explícitamente si no lo es. `.env.example` documenta el patrón
+sin guardar rutas locales. En esta VM, `scripts/metacrawler-vm` activa
+`/media/sf_fileforge-data/metacrawler` y muestra la raíz efectiva al arrancar.
+
+La disposición de ejecución es `<root>/<cliente>/<país>/{<fuente>,_plans,_state,_logs}`;
+el deduplicador global permanece en `<root>/_state/dedupe_store.json`. Los planes
+generados viven en `_plans/sources.yaml`, nunca en el árbol de código.
+
+Comandos sin crawling:
+
+```bash
+scripts/metacrawler-vm validate-config
+scripts/metacrawler-vm status
+scripts/metacrawler-vm plan --client veredictum --country ti
+scripts/metacrawler-vm reset-state --client veredictum --country ti --yes
+```
+
+`reset-state` requiere confirmación explícita. `status` y `plan` no importan ni
+ejecutan crawlers. Los resultados antiguos (`downloaded`, `skipped`, `failed`) se
+adaptan al contrato estructurado; los eventos operativos se escriben también como
+JSONL. Muchos crawlers institucionales aún convierten excepciones en `skipped`, por
+lo que arrancar correctamente el core no certifica su extracción ni distingue la
+causa interna que esos módulos ocultaron.
+
 ⚠️ Estado del proyecto
 
 Metacrawler está en desarrollo activo.

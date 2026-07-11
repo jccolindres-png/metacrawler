@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 import os
 import sys
-import subprocess
+import argparse
+import json
+import yaml
 
 # -------------------------------------------------
 # Paths base
@@ -23,7 +25,6 @@ if not os.path.isdir(CLIENTS_DIR):
     CLIENTS_DIR = None
 
 ITU_MAP_FILE = os.path.join(BACKEND_DIR, "core", "config", "itu_map.yaml")
-SOURCES_FILE = os.path.join(BACKEND_DIR, "core", "sources.yaml")
 
 # -------------------------------------------------
 # Imports desde utils (estructura real)
@@ -44,6 +45,9 @@ from core.utils.institutions_utils import (
 )
 
 from core.crawler_manager import CrawlerManager
+from core.bootstrap_sources import bootstrap
+from config.runtime import validate_data_root, RuntimeConfigError
+from core.utils.round_robin import RoundRobinScheduler
 
 # -------------------------------------------------
 # Utilidades locales
@@ -125,6 +129,8 @@ def list_crawlers(client, country):
 
 def run():
     print("🚀 Metacrawler Runner")
+    root = validate_data_root()
+    print(f"Effective data root: {root}")
 
     # -------- Cliente --------
     clients = list_clients()
@@ -162,26 +168,8 @@ def run():
 
         print(f"\n⚙️ Ejecutando bootstrap para {url_file}...\n")
 
-        if os.path.exists(SOURCES_FILE):
-            os.remove(SOURCES_FILE)
-
-        env = os.environ.copy()
-        env["PYTHONPATH"] = BACKEND_DIR
-
-        cmd = [
-            sys.executable,
-            "-m",
-            "core.bootstrap_sources",
-            "--client", client,
-            "--urls", urls_path,
-        ]
-
-        if country:
-            cmd.extend(["--country", country])
-
-        subprocess.run(cmd, check=True, env=env)
-
-        sources = load_sources(SOURCES_FILE)
+        generated_plan = bootstrap(client, country, urls_path)
+        sources = load_sources(generated_plan)
 
         print("\n¿Qué querés correr?\n")
         print("[A] Todas las fuentes")
@@ -232,12 +220,71 @@ def run():
         manager = CrawlerManager(
             client=client,
             country=country,
-            only_source=None
+            only_source=None,
+            plan_path=generated_plan,
         )
 
         manager.sources_override = selected_sources
         manager.run()
 
 
-if __name__ == "__main__":
-    run()
+def _discover():
+    return {client: [extract_country_from_filename(f) for f in list_url_files(client)
+                     if extract_country_from_filename(f)] for client in list_clients()}
+
+
+def command(args):
+    root = validate_data_root()
+    print(f"Effective data root: {root}")
+    if args.command == "validate-config":
+        print("Configuration valid and data root writable")
+        return
+    if args.command == "plan":
+        url_file = os.path.join(CLIENTS_DIR, args.client, f"{args.country}-urls.txt")
+        path = bootstrap(args.client, args.country, url_file)
+        print(path)
+        return
+    if args.command == "status":
+        report = {"clients": _discover(), "data_root": str(root), "writable": os.access(root, os.W_OK), "runtime": {}}
+        for client, countries in report["clients"].items():
+            for country in countries:
+                base = root / client / country
+                state_file = base / "_state" / "round_robin.yaml"
+                plan = base / "_plans" / "sources.yaml"
+                scheduler, scheduler_error = None, None
+                if state_file.exists():
+                    try: scheduler = yaml.safe_load(state_file.read_text())
+                    except Exception as exc: scheduler_error = f"malformed: {exc}"
+                report["runtime"][f"{client}/{country}"] = {
+                    "plan": str(plan) if plan.exists() else None,
+                    "scheduler": scheduler,
+                    "scheduler_error": scheduler_error,
+                    "pending_retries": [t for t in (scheduler or {}).get("tasks", []) if t.get("retry_at")],
+                }
+        dedupe = root / "_state" / "dedupe_store.json"
+        try: report["dedupe_entries"] = len(json.loads(dedupe.read_text()).get("hashes", {})) if dedupe.exists() else 0
+        except Exception as exc: report["dedupe_error"] = str(exc)
+        print(json.dumps(report, indent=2, default=str))
+        return
+    if args.command == "reset-state":
+        if not args.yes: raise RuntimeError("reset-state requires --yes")
+        state = root / args.client / args.country / "_state" / "round_robin.yaml"
+        RoundRobinScheduler(state, args.client, args.country).reset()
+        print(f"Reset scheduler state: {state}")
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    sub = parser.add_subparsers(dest="command")
+    sub.add_parser("validate-config")
+    sub.add_parser("status")
+    plan_cmd = sub.add_parser("plan"); plan_cmd.add_argument("--client", required=True); plan_cmd.add_argument("--country", required=True)
+    reset = sub.add_parser("reset-state"); reset.add_argument("--client", required=True); reset.add_argument("--country", required=True); reset.add_argument("--yes", action="store_true")
+    args = parser.parse_args()
+    try:
+        command(args) if args.command else run()
+    except RuntimeConfigError as exc:
+        parser.error(str(exc))
+
+
+if __name__ == "__main__": main()

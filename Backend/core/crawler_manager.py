@@ -3,6 +3,9 @@
 import yaml
 import time
 import sys
+import json
+import uuid
+import traceback
 from pathlib import Path
 from datetime import datetime
 
@@ -17,7 +20,8 @@ if str(BACKEND_DIR) not in sys.path:
 
 from core.crawler_loader import load_crawler
 from core.utils.round_robin import RoundRobinScheduler
-from config.paths import METACRAWLER_DATA_ROOT
+from core.results import CrawlerResult, normalize_result
+from config.runtime import validate_data_root
 
 # =====================================================
 # PATHS
@@ -38,14 +42,19 @@ class CrawlerManager:
     - El crawler NO decide ritmo ni volumen
     """
 
-    def __init__(self, client: str, country: str, mode="incremental", only_source=None):
+    def __init__(self, client: str, country: str, mode="incremental", only_source=None, plan_path=None, reset_state=False):
         self.client = client
         self.country = country.lower()
         self.mode = mode
         self.only_source = only_source
         self.start_time = datetime.utcnow()
+        self.run_id = str(uuid.uuid4())
+        self.plan_path = Path(plan_path) if plan_path else None
+        self.reset_state_requested = reset_state
 
-        self.root_dir = Path(METACRAWLER_DATA_ROOT) / self.client / self.country
+        data_root = validate_data_root()
+        print(f"Effective data root: {data_root}")
+        self.root_dir = data_root / self.client / self.country
         self.root_dir.mkdir(parents=True, exist_ok=True)
 
         self.state_dir = self.root_dir / "_state"
@@ -59,9 +68,10 @@ class CrawlerManager:
         }
 
         self.log_file = None
+        self.jsonl_file = None
 
         self.rr = RoundRobinScheduler(
-            self.state_dir / "round_robin.yaml"
+            self.state_dir / "round_robin.yaml", self.client, self.country
         )
 
     # -------------------------------------------------
@@ -73,13 +83,21 @@ class CrawlerManager:
             with open(self.log_file, "a", encoding="utf-8") as f:
                 f.write(line + "\n")
 
+    def event(self, event: str, **fields):
+        payload = {"timestamp": datetime.utcnow().isoformat() + "Z", "run_id": self.run_id,
+                   "client": self.client, "country": self.country, "event": event, **fields}
+        if self.jsonl_file:
+            with open(self.jsonl_file, "a", encoding="utf-8") as f:
+                f.write(json.dumps(payload, ensure_ascii=False, default=str) + "\n")
+
     # -------------------------------------------------
 
     def load_sources(self):
-        if not SOURCES_FILE.exists():
-            raise RuntimeError("sources.yaml no existe")
+        source_file = self.plan_path or SOURCES_FILE
+        if not source_file.exists():
+            raise RuntimeError(f"source plan does not exist: {source_file}")
 
-        with open(SOURCES_FILE, "r", encoding="utf-8") as f:
+        with open(source_file, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f)
 
         return data.get("sources", [])
@@ -151,16 +169,19 @@ class CrawlerManager:
         logs_dir.mkdir(parents=True, exist_ok=True)
         safe_ts = self.start_time.strftime("%Y%m%d_%H%M%S")
         self.log_file = logs_dir / f"crawl_{safe_ts}.log"
+        self.jsonl_file = logs_dir / f"crawl_{safe_ts}.jsonl"
 
         tasks = []
+        self.source_configs = {}
         for source in sources:
+            self.source_configs[source["id"]] = source
             tasks.append({
                 "source_id": source["id"],
                 "targets": source.get("targets") or []
             })
 
-        # 🔒 Siempre limpiar y reinicializar RR
-        self.rr.reset()
+        if self.reset_state_requested:
+            self.rr.reset()
         self.rr.bootstrap(tasks)
 
         self.log(
@@ -168,31 +189,25 @@ class CrawlerManager:
         )
         self.log(f"📦 Tareas totales: {len(self.rr.state.get('tasks', []))}")
 
-        while True:
+        self.event("run_start", scheduler_decision="bounded_cycle", task_count=len(tasks))
+        for _ in range(len(tasks)):
             task = self.rr.next()
             if not task:
                 break
-
+            self.event("task_start", source=task["source_id"], scheduler_decision="selected")
             result = self._run_task(task)
-            self.rr.update(task, result)
-
-            time.sleep(8)
+            self.rr.update(task, result.to_dict())
 
         self.finish()
 
     # -------------------------------------------------
 
-    def _run_task(self, task: dict) -> str:
+    def _run_task(self, task: dict) -> CrawlerResult:
         source_id = task["source_id"]
-        targets = task.get("targets", [])
+        source_config = self.source_configs.get(source_id, {})
+        targets = source_config.get("targets") or []
 
         self.log(f"🔹 Ejecutando: {source_id}")
-
-        crawler_module = load_crawler(
-            client=self.client,
-            country=self.country,
-            source_id=source_id,
-        )
 
         downloads_dir = self.root_dir / source_id
         downloads_dir.mkdir(parents=True, exist_ok=True)
@@ -206,11 +221,14 @@ class CrawlerManager:
             "state_file": str(state_file),
             "mode": self.mode,
             "targets": targets,
+            "base_urls": source_config.get("base_urls") or [],
         }
 
         self.stats["attempted"] += 1
+        started = time.monotonic()
 
         try:
+            crawler_module = load_crawler(client=self.client, country=self.country, source_id=source_id)
             if hasattr(crawler_module, "download_one"):
                 raw_result = crawler_module.download_one(source_ctx)
             elif hasattr(crawler_module, "run"):
@@ -221,14 +239,22 @@ class CrawlerManager:
         except Exception as e:
             self.stats["failed"] += 1
             self.log(f"❌ Error {source_id}: {e}")
-            return "failed"
+            result = CrawlerResult("failed", "crawler raised an exception", source_id,
+                                   error_type=type(e).__name__, error_message=str(e), retryable=True)
+            self.event("task_end", source=source_id, duration_seconds=time.monotonic()-started,
+                       result_status=result.status, reason=result.reason, exception=traceback.format_exc(), retryable=True)
+            return result
 
-        if raw_result == "downloaded":
+        result = normalize_result(raw_result, source_id)
+        if result.status == "downloaded":
             self.stats["downloaded"] += 1
-            return "downloaded"
-
-        self.stats["skipped"] += 1
-        return "skipped"
+        elif result.status == "failed": self.stats["failed"] += 1
+        else: self.stats["skipped"] += 1
+        self.event("task_end", source=source_id, duration_seconds=time.monotonic()-started,
+                   result_status=result.status, reason=result.reason, retryable=result.retryable,
+                   retry_at=result.retry_at, downloaded_path=result.downloaded_path,
+                   content_hash=result.content_hash)
+        return result
 
     # -------------------------------------------------
 
@@ -241,3 +267,4 @@ class CrawlerManager:
         self.log(f"⏭️ Omitidos: {self.stats['skipped']}")
         self.log(f"❌ Fallidos: {self.stats['failed']}")
         self.log(f"⏱️ Duración: {duration:.1f}s")
+        self.event("run_end", duration_seconds=duration, stats=self.stats)

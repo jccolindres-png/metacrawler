@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -euo pipefail
+export METACRAWLER_DATA_ROOT=/media/sf_fileforge-data/metacrawler
+exec python3 "$(dirname "$0")/../runner.py" "$@"

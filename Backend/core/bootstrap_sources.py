@@ -2,6 +2,7 @@
 import os
 import sys
 import argparse
+import tempfile
 import yaml
 from urllib.parse import urlparse
 
@@ -13,8 +14,7 @@ if BACKEND_DIR not in sys.path:
     sys.path.insert(0, BACKEND_DIR)
 
 from core.classifiers.master import load_classifier
-
-SOURCES_FILE = os.path.join(BASE_DIR, "sources.yaml")
+from config.runtime import validate_data_root
 
 
 # -------------------------------------------------
@@ -52,7 +52,12 @@ def read_urls(urls_file: str):
 # Bootstrap
 # -------------------------------------------------
 
-def bootstrap(client: str, country: str | None, urls_file: str):
+def plan_path(client: str, country: str, data_root=None):
+    root = data_root or validate_data_root()
+    return os.path.join(str(root), client, country, "_plans", "sources.yaml")
+
+
+def bootstrap(client: str, country: str | None, urls_file: str, output_file=None):
     print("🔧 Iniciando bootstrap (PLAN ONLY)")
     print(f"👤 Cliente : {client}")
     print(f"🌍 País    : {country if country else '(no aplica)'}")
@@ -102,16 +107,24 @@ def bootstrap(client: str, country: str | None, urls_file: str):
             "subfolder": info["subfolder"]
         })
 
-    with open(SOURCES_FILE, "w", encoding="utf-8") as f:
-        yaml.dump(
-            sources_yaml,
-            f,
-            sort_keys=False,
-            allow_unicode=True
-        )
+    if not country:
+        raise RuntimeError("country is required for a scoped source plan")
+    output_file = output_file or plan_path(client, country)
+    os.makedirs(os.path.dirname(output_file), exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=".sources.", suffix=".yaml", dir=os.path.dirname(output_file))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            yaml.safe_dump(sources_yaml, f, sort_keys=False, allow_unicode=True)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temporary, output_file)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
 
     print("✅ Bootstrap completado (PLAN ONLY)")
-    print("📄 sources.yaml generado correctamente")
+    print(f"📄 Plan generado: {output_file}")
+    return output_file
 
 
 def main():
