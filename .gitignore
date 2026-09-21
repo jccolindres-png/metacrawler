@@ -20,3 +20,5 @@ downloads/
 
 # Local machine configuration
 .env.local
+# Shell history
+.bash_history
