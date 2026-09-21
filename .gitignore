@@ -17,3 +17,6 @@ downloads/
 .DS_Store
 .vscode/
 .idea/
+
+# Local machine configuration
+.env.local
