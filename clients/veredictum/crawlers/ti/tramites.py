@@ -108,28 +108,16 @@ def download_one(source: dict) -> str:
     filename = safe(f"tramites_{today}_{name}")
     dest = download_dir / filename
 
-    if dest.exists():
-        try:
-            same = dest.is_file() and dest.read_bytes() == r.content
-        except OSError as exc:
-            return CrawlerResult("failed", "Trámites duplicate check failed; cursor retained", "tramites",
-                                 attempted_url=pdf_url, error_type=type(exc).__name__,
-                                 error_message=str(exc), retryable=True)
-        if not same:
-            return CrawlerResult("manual_review", "Trámites destination differs; cursor retained", "tramites",
-                                 attempted_url=pdf_url)
-        state_file.write_text(str(idx + 1), encoding="utf-8")
-        return CrawlerResult("duplicate", "Trámites PDF already present", "tramites",
-                             attempted_url=pdf_url, downloaded_path=str(dest))
-
     try:
-        created = save_download(r.content, dest, r.url)
+        outcome = save_download(r.content, dest, r.url,
+                                source_root=download_dir, return_outcome=True)
     except (OSError, ValueError) as exc:
         return CrawlerResult("failed", "Trámites persistence failed; cursor retained", "tramites",
                              attempted_url=pdf_url, error_type=type(exc).__name__,
                              error_message=str(exc), retryable=True)
-    if not created:
-        return CrawlerResult("manual_review", "Trámites destination appeared; cursor retained", "tramites",
-                             attempted_url=pdf_url)
     state_file.write_text(str(idx + 1), encoding="utf-8")
+    if outcome.status == "duplicate":
+        return CrawlerResult("duplicate", "Trámites PDF already present", "tramites",
+                             attempted_url=pdf_url, downloaded_path=str(outcome.path),
+                             content_hash=outcome.content_hash)
     return "downloaded"

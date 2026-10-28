@@ -105,28 +105,16 @@ def download_one(source: dict) -> str:
         return CrawlerResult("invalid_document", "invalid Poder Judicial PDF; cursor retained", "poder_judicial",
                              attempted_url=pdf_url, http_status=pdf.status_code, retryable=True)
 
-    if dest.exists():
-        try:
-            same = dest.is_file() and dest.read_bytes() == pdf.content
-        except OSError as exc:
-            return CrawlerResult("failed", "Poder Judicial duplicate check failed; cursor retained", "poder_judicial",
-                                 attempted_url=pdf_url, error_type=type(exc).__name__,
-                                 error_message=str(exc), retryable=True)
-        if not same:
-            return CrawlerResult("manual_review", "Poder Judicial destination differs; cursor retained", "poder_judicial",
-                                 attempted_url=pdf_url)
-        state_file.write_text(str(current_id), encoding="utf-8")
-        return CrawlerResult("duplicate", "Poder Judicial PDF already present", "poder_judicial",
-                             attempted_url=pdf_url, downloaded_path=str(dest))
-
     try:
-        created = save_download(pdf.content, dest, pdf.url)
+        outcome = save_download(pdf.content, dest, pdf.url,
+                                source_root=download_dir, return_outcome=True)
     except (OSError, ValueError) as exc:
         return CrawlerResult("failed", "Poder Judicial persistence failed; cursor retained", "poder_judicial",
                              attempted_url=pdf_url, error_type=type(exc).__name__,
                              error_message=str(exc), retryable=True)
-    if not created:
-        return CrawlerResult("manual_review", "Poder Judicial destination appeared; cursor retained", "poder_judicial",
-                             attempted_url=pdf_url)
     state_file.write_text(str(current_id), encoding="utf-8")
+    if outcome.status == "duplicate":
+        return CrawlerResult("duplicate", "Poder Judicial PDF already present", "poder_judicial",
+                             attempted_url=pdf_url, downloaded_path=str(outcome.path),
+                             content_hash=outcome.content_hash)
     return "downloaded"

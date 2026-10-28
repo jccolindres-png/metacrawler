@@ -76,7 +76,7 @@ def extract_pdf_links(html: str, base_url: str) -> list[str]:
     return out
 
 
-def download_pdf(session: requests.Session, pdf_url: str, dest: Path):
+def download_pdf(session: requests.Session, pdf_url: str, dest: Path, source_root: Path):
     try:
         r = session.get(
             pdf_url,
@@ -102,14 +102,16 @@ def download_pdf(session: requests.Session, pdf_url: str, dest: Path):
                              attempted_url=pdf_url, http_status=r.status_code, retryable=True)
 
     try:
-        created = save_download(r.content, dest, r.url)
+        outcome = save_download(r.content, dest, r.url,
+                                source_root=source_root, return_outcome=True)
     except (OSError, ValueError) as exc:
         return CrawlerResult("failed", "Asamblea persistence failed; cursor retained", "asamblea",
                              attempted_url=pdf_url, error_type=type(exc).__name__,
                              error_message=str(exc), retryable=True)
-    if not created:
-        return CrawlerResult("manual_review", "Asamblea destination appeared; cursor retained", "asamblea",
-                             attempted_url=pdf_url)
+    if outcome.status == "duplicate":
+        return CrawlerResult("duplicate", "Asamblea PDF content already acquired", "asamblea",
+                             attempted_url=pdf_url, downloaded_path=str(outcome.path),
+                             content_hash=outcome.content_hash)
     return "downloaded"
 
 
@@ -139,6 +141,7 @@ def download_one(source: dict) -> str:
 
     session = requests.Session()
     first_failure = None
+    duplicate = None
 
     for target in targets:
         base_url = target.get("url")
@@ -187,19 +190,19 @@ def download_one(source: dict) -> str:
             name = safe(name if ".pdf" in name.lower() else f"{name}.pdf")
             dest = lib_dir / name
 
-            if dest.exists():
-                continue
-
-            outcome = download_pdf(session, pdf_url, dest)
+            outcome = download_pdf(session, pdf_url, dest, download_dir)
             if outcome == "downloaded":
                 state_file.write_text("done", encoding="utf-8")
                 return "downloaded"
             if isinstance(outcome, CrawlerResult):
-                first_failure = first_failure or outcome
+                if outcome.status == "duplicate":
+                    duplicate = outcome
+                else:
+                    first_failure = first_failure or outcome
 
         # si este target no dio PDF nuevo → RR sigue
 
     if first_failure:
         return first_failure
     state_file.write_text("done", encoding="utf-8")
-    return "skipped"
+    return duplicate or "skipped"

@@ -250,7 +250,7 @@ class CursorIntegrityTests(unittest.TestCase):
                 self.assertEqual(duplicate.status, "duplicate")
                 self.assertEqual(state_path.read_text(), after)
 
-    def test_existing_different_bytes_do_not_advance_numeric_cursors(self):
+    def test_existing_different_bytes_publish_new_name_before_advancing(self):
         page = BASE + "/cgi-bin/search.pl?query=&fecha=2026-10-28"
         gaceta_pdf = BASE + "/one.pdf"
         tramites_pdf = BASE + "/pub/tramites/MINAE/manual-2025-v2.pdf"
@@ -273,8 +273,10 @@ class CursorIntegrityTests(unittest.TestCase):
                 document.write_bytes(b"different bytes")
                 Path(source["state_file"]).write_text(before)
                 result, _ = self.run_session(module, source, routes)
-                self.assertEqual(result.status, "manual_review")
-                self.assertEqual(Path(source["state_file"]).read_text(), before)
+                self.assertEqual(result, "downloaded")
+                self.assertEqual(document.read_bytes(), b"different bytes")
+                self.assertEqual(len(list(Path(source["download_dir"]).rglob("*.pdf"))), 2)
+                self.assertNotEqual(Path(source["state_file"]).read_text(), before)
 
     def test_scanners_do_not_mark_done_after_unsuccessful_acquisition(self):
         modules = (asamblea, conare_kimuk, instituciones_legacy, ucr_kerwa, una_repositorio)

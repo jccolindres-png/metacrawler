@@ -1,98 +1,123 @@
+"""Content identity for one client's country/source download directory."""
+
+import fcntl
 import hashlib
 import json
-import sys
+import os
+import tempfile
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
-from datetime import datetime
-
-# -------------------------------------------------
-# Asegurar Backend como raíz importable
-# -------------------------------------------------
-
-CODE_DIR = Path(__file__).resolve().parent
-BACKEND_DIR = CODE_DIR.parent.parent
-if str(BACKEND_DIR) not in sys.path:
-    sys.path.insert(0, str(BACKEND_DIR))
-
-from config.paths import METACRAWLER_DATA_ROOT
-
-# =====================================================
-# CONFIG
-# =====================================================
-
-# Estado del deduplicador (persistente, transversal)
-DEDUPE_STORE = (
-    Path(METACRAWLER_DATA_ROOT)
-    / "_state"
-    / "dedupe_store.json"
-)
-
-DEDUPE_STORE.parent.mkdir(parents=True, exist_ok=True)
-
-# =====================================================
-# HELPERS INTERNOS
-# =====================================================
-
-def _load_store():
-    if not DEDUPE_STORE.exists():
-        return {
-            "meta": {
-                "schema_version": "1.0",
-                "last_updated": None
-            },
-            "hashes": {}
-        }
-
-    with open(DEDUPE_STORE, "r", encoding="utf-8") as f:
-        return json.load(f)
 
 
-def _save_store(store: dict):
-    store["meta"]["last_updated"] = datetime.utcnow().isoformat()
-    with open(DEDUPE_STORE, "w", encoding="utf-8") as f:
-        json.dump(store, f, indent=2, ensure_ascii=False)
+@dataclass(frozen=True)
+class Acquisition:
+    status: str
+    path: Path
+    content_hash: str
 
 
-def _hash_bytes(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
+def _file_hash(path):
+    digest = hashlib.sha256()
+    with path.open("rb") as document:
+        for block in iter(lambda: document.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
 
-# =====================================================
-# API PÚBLICA (MISMA FIRMA QUE LOS CRAWLERS VIEJOS)
-# =====================================================
 
-def save_pdf_if_unique(
-    pdf_bytes: bytes,
-    dest_path: str,
-    source_url: str | None = None
-) -> bool:
-    """
-    Guarda el PDF solo si el CONTENIDO es nuevo.
+def _matching_document(root, digest):
+    # Files, including older downloads without sidecars, are authoritative.
+    # Rechecking also recovers from a crash before index registration.
+    for path in root.rglob("*"):
+        if path.is_file() and not path.is_symlink() and path.suffix.lower() == ".pdf":
+            if _file_hash(path) == digest:
+                return path
+    return None
 
-    Retorna:
-        True  -> archivo guardado
-        False -> duplicado (no se guardó)
-    """
 
-    content_hash = _hash_bytes(pdf_bytes)
-    store = _load_store()
+def _available_name(destination, digest):
+    if not destination.exists():
+        return destination
+    stem, suffix = destination.stem, destination.suffix
+    for index in range(1000):
+        marker = digest[:16] if index == 0 else f"{digest[:16]}_{index}"
+        candidate = destination.with_name(f"{stem}_{marker}{suffix}")
+        if not candidate.exists():
+            return candidate
+    raise FileExistsError(f"no unused name for {destination}")
 
-    # Ya existe el contenido
-    if content_hash in store["hashes"]:
-        return False
 
-    # Guardar archivo
-    dest = Path(dest_path)
-    dest.parent.mkdir(parents=True, exist_ok=True)
-
-    with open(dest, "wb") as f:
-        f.write(pdf_bytes)
-
-    # Registrar hash
-    store["hashes"][content_hash] = {
-        "first_seen": datetime.utcnow().isoformat(),
-        "path": str(dest),
-        "source_url": source_url,
-        "size": len(pdf_bytes)
+def _record(root, digest, destination, size):
+    index = root / ".dedupe_store.json"
+    if index.exists():
+        store = json.loads(index.read_text(encoding="utf-8"))
+        if not isinstance(store, dict) or not isinstance(store.get("hashes"), dict):
+            raise ValueError("invalid deduplication index")
+    else:
+        store = {"meta": {"schema_version": "1.0"}, "hashes": {}}
+    store["hashes"][digest] = {
+        "first_seen": datetime.now(timezone.utc).isoformat(),
+        "path": str(destination.relative_to(root)), "size": size,
     }
+    store["meta"]["last_updated"] = datetime.now(timezone.utc).isoformat()
+    fd, temporary = tempfile.mkstemp(prefix=".dedupe-", dir=root)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(store, handle, ensure_ascii=False, indent=2)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, index)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
 
-    _save_store(store)
-    return True
+
+def acquire(data, destination, source_root, publish):
+    """Deduplicate by bytes and publish under an exclusive per-source lock."""
+    if not isinstance(data, bytes):
+        raise TypeError("downloaded bytes are required")
+    root = Path(source_root).resolve()
+    destination = Path(destination).resolve()
+    if not destination.is_relative_to(root):
+        raise ValueError("destination must belong to its source directory")
+    root.mkdir(parents=True, exist_ok=True)
+    digest = hashlib.sha256(data).hexdigest()
+    with (root / ".dedupe.lock").open("a+b") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        existing = _matching_document(root, digest)
+        if existing is not None:
+            return Acquisition("duplicate", existing, digest)
+        selected = _available_name(destination, digest)
+        if not publish(selected):
+            raise FileExistsError(f"destination appeared: {selected}")
+        try:
+            _record(root, digest, selected, len(data))
+        except BaseException:
+            from core.source_sidecar import sidecar_path
+            sidecar_path(selected).unlink(missing_ok=True)
+            selected.unlink(missing_ok=True)
+            raise
+        return Acquisition("downloaded", selected, digest)
+
+
+def save_pdf_if_unique(pdf_bytes: bytes, dest_path: str, source_url: str | None = None) -> bool:
+    """Compatibility API; new callers should use source_sidecar.save_download."""
+    if source_url is not None:
+        from core.source_sidecar import save_download
+        return save_download(pdf_bytes, dest_path, source_url)
+
+    def publish_raw(destination):
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        fd, temporary = tempfile.mkstemp(prefix=".dedupe-", dir=destination.parent)
+        try:
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(pdf_bytes)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.link(temporary, destination)
+            return True
+        finally:
+            os.unlink(temporary)
+
+    outcome = acquire(pdf_bytes, dest_path, Path(dest_path).parent, publish_raw)
+    return outcome.status == "downloaded"

@@ -138,10 +138,6 @@ def download_one(source):
                              attempted_url=page.url, retryable=True)
     for index in range(state["post_index"], len(posts)):
         post_url = posts[index]
-        if post_url in state["seen_posts"]:
-            state["post_index"], state["pdf_index"] = index + 1, 0
-            _save_state(state_file, state)
-            continue
         try:
             post = _get(session, post_url)
         except requests.RequestException as exc:
@@ -150,14 +146,7 @@ def download_one(source):
         start = state["pdf_index"] if index == state["post_index"] else 0
         for pdf_index in range(start, len(pdfs)):
             pdf_url = pdfs[pdf_index]
-            legacy = directory / Path(urlparse(pdf_url).path).name
             dest = directory / _filename(pdf_url)
-            if pdf_url in state["seen_pdfs"] or legacy.exists() or dest.exists():
-                if pdf_url not in state["seen_pdfs"]:
-                    state["seen_pdfs"].append(pdf_url)
-                state["post_index"], state["pdf_index"] = index, pdf_index + 1
-                _save_state(state_file, state)
-                continue
             try:
                 pdf = _get(session, pdf_url)
             except requests.RequestException as exc:
@@ -166,15 +155,18 @@ def download_one(source):
                 return CrawlerResult("invalid_document", "invalid PGR PDF; cursor retained", "pgr",
                                      attempted_url=pdf_url, http_status=pdf.status_code, retryable=True)
             try:
-                created = save_download(pdf.content, dest, pdf.url)
+                outcome = save_download(pdf.content, dest, pdf.url,
+                                        source_root=directory, return_outcome=True)
             except (OSError, ValueError) as exc:
                 return _save_failed(exc, pdf_url)
-            if not created:
-                return CrawlerResult("manual_review", "PGR destination appeared; cursor retained", "pgr",
-                                     attempted_url=pdf_url)
-            state["seen_pdfs"].append(pdf_url)
+            if pdf_url not in state["seen_pdfs"]:
+                state["seen_pdfs"].append(pdf_url)
             state["post_index"], state["pdf_index"] = index, pdf_index + 1
             _save_state(state_file, state)
+            if outcome.status == "duplicate":
+                return CrawlerResult("duplicate", "PGR PDF content already acquired", "pgr",
+                                     attempted_url=pdf_url, downloaded_path=str(outcome.path),
+                                     content_hash=outcome.content_hash)
             return "downloaded"
         state["seen_posts"].append(post_url)
         state["post_index"], state["pdf_index"] = index + 1, 0

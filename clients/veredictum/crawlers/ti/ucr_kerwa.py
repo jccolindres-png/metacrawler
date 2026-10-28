@@ -46,6 +46,7 @@ def download_one(source: dict) -> str:
 
     session = requests.Session()
     first_failure = None
+    duplicate = None
 
     for base_url in base_urls:
         try:
@@ -81,9 +82,6 @@ def download_one(source: dict) -> str:
             filename = safe(os.path.basename(href))
             dest = download_dir / filename
 
-            if dest.exists():
-                continue
-
             try:
                 pdf = session.get(pdf_url, timeout=20)
             except requests.RequestException as exc:
@@ -104,17 +102,18 @@ def download_one(source: dict) -> str:
                     attempted_url=pdf_url, http_status=pdf.status_code, retryable=True)
                 continue
             try:
-                created = save_download(pdf.content, dest, pdf.url)
+                outcome = save_download(pdf.content, dest, pdf.url,
+                                        source_root=download_dir, return_outcome=True)
             except (OSError, ValueError) as exc:
                 first_failure = first_failure or CrawlerResult(
                     "failed", "UCR Kerwa persistence failed; cursor retained", "ucr_kerwa",
                     attempted_url=pdf_url, error_type=type(exc).__name__,
                     error_message=str(exc), retryable=True)
                 continue
-            if not created:
-                first_failure = first_failure or CrawlerResult(
-                    "manual_review", "UCR Kerwa destination appeared; cursor retained", "ucr_kerwa",
-                    attempted_url=pdf_url)
+            if outcome.status == "duplicate":
+                duplicate = CrawlerResult("duplicate", "PDF content already acquired", "ucr_kerwa",
+                                          attempted_url=pdf_url, downloaded_path=str(outcome.path),
+                                          content_hash=outcome.content_hash)
                 continue
             state_file.write_text("done", encoding="utf-8")
             return "downloaded"
@@ -124,4 +123,4 @@ def download_one(source: dict) -> str:
     if first_failure:
         return first_failure
     state_file.write_text("done", encoding="utf-8")
-    return "skipped"
+    return duplicate or "skipped"

@@ -148,28 +148,16 @@ def download_one(source: dict) -> str:
             return CrawlerResult("invalid_document", "invalid Gaceta PDF; cursor retained", "gaceta",
                                  attempted_url=pdf_url, http_status=pdf.status_code, retryable=True)
 
-        if dest.exists():
-            try:
-                same = dest.is_file() and dest.read_bytes() == pdf.content
-            except OSError as exc:
-                return CrawlerResult("failed", "Gaceta duplicate check failed; cursor retained", "gaceta",
-                                     attempted_url=pdf_url, error_type=type(exc).__name__,
-                                     error_message=str(exc), retryable=True)
-            if not same:
-                return CrawlerResult("manual_review", "Gaceta destination differs; cursor retained", "gaceta",
-                                     attempted_url=pdf_url)
-            duplicates += 1
-            continue
-
         try:
-            created = save_download(pdf.content, dest, pdf.url)
+            outcome = save_download(pdf.content, dest, pdf.url,
+                                    source_root=download_dir, return_outcome=True)
         except (OSError, ValueError) as exc:
             return CrawlerResult("failed", "Gaceta persistence failed; cursor retained", "gaceta",
                                  attempted_url=pdf_url, error_type=type(exc).__name__,
                                  error_message=str(exc), retryable=True)
-        if not created:
-            return CrawlerResult("manual_review", "Gaceta destination appeared; cursor retained", "gaceta",
-                                 attempted_url=pdf_url)
+        if outcome.status == "duplicate":
+            duplicates += 1
+            continue
         state_file.write_text(current.isoformat(), encoding="utf-8")
         return "downloaded"
 

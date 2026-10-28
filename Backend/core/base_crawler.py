@@ -2,6 +2,8 @@
 
 import requests
 from pathlib import Path
+from core.source_sidecar import save_download
+from core.results import CrawlerResult
 
 
 def _is_pdf_response(resp: requests.Response) -> bool:
@@ -57,12 +59,14 @@ def download_one(source: dict) -> str:
 
     dest = download_dir / filename
 
-    if dest.exists() and mode == "incremental":
-        return "skipped"
-
     try:
-        dest.write_bytes(r.content)
+        outcome = save_download(r.content, dest, r.url,
+                                source_root=download_dir, return_outcome=True)
         state_file.write_text("done", encoding="utf-8")
+        if outcome.status == "duplicate":
+            return CrawlerResult("duplicate", "PDF content already acquired", source.get("source_id", "base"),
+                                 attempted_url=url, downloaded_path=str(outcome.path),
+                                 content_hash=outcome.content_hash)
         return "downloaded"
     except Exception:
         return "failed"

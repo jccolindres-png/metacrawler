@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from core.utils.dedupe import acquire
+
 
 def sidecar_path(document_path):
     return Path(str(document_path) + ".source.json")
@@ -74,8 +76,8 @@ def write_sidecar(document_path, data, source_url, downloaded_at_utc=None):
     return sidecar
 
 
-def save_download(data, document_path, source_url):
-    """Publish new bytes and sidecar; return False when the name already exists."""
+def _publish_download(data, document_path, source_url):
+    """Publish new bytes and sidecar without replacing either file."""
     provenance = _provenance(data, source_url)
     document = Path(document_path)
     document.parent.mkdir(parents=True, exist_ok=True)
@@ -92,11 +94,22 @@ def save_download(data, document_path, source_url):
             return False
         try:
             write_sidecar(document, data, source_url, provenance["downloaded_at_utc"])
+            _sync_directory(document.parent)
         except BaseException:
             if created:
+                sidecar.unlink(missing_ok=True)
                 document.unlink()
             raise
-        _sync_directory(document.parent)
         return True
     finally:
         os.unlink(temporary)
+
+
+def save_download(data, document_path, source_url, *, source_root=None, return_outcome=False):
+    """Acquire content in one source scope, preserving the boolean legacy API."""
+    _provenance(data, source_url)
+    document = Path(document_path)
+    root = Path(source_root) if source_root is not None else document.parent
+    outcome = acquire(data, document, root,
+                      lambda selected: _publish_download(data, selected, source_url))
+    return outcome if return_outcome else outcome.status == "downloaded"

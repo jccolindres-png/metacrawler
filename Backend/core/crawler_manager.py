@@ -258,6 +258,7 @@ class CrawlerManager:
             state_file.write_text("{}", encoding="utf-8")
 
         source_ctx = {
+            "source_id": source_id,
             "download_dir": str(downloads_dir),
             "state_file": str(state_file),
             "mode": self.mode,
