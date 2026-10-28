@@ -1,182 +1,186 @@
-#!/usr/bin/env python3
+"""Download PDF publications from the PGR institutional archive."""
 
+import hashlib
+import json
 import os
+import tempfile
+from pathlib import Path
+from urllib.parse import urljoin, urlparse
+
 import requests
 from bs4 import BeautifulSoup
-from urllib.parse import urljoin, urlparse
-from pathlib import Path
 
-# =====================================================
-# CONFIG
-# =====================================================
+from core.results import CrawlerResult
+from core.source_sidecar import save_download
 
-REQUEST_TIMEOUT = 25
-BASE_SEARCH_URL = "https://www.pgr.go.cr/?s={query}"
-
-# =====================================================
-# KEYWORDS (HARDCODEADAS)
-# =====================================================
-
-PRIORITY_A = [
-    "Dictamen",
-    "Opinión Jurídica",
-    "Pronunciamiento",
-    "Jurisprudencia Administrativa",
-    "Criterio Institucional",
-]
-
-PRIORITY_B = [
-    "C-",
-    "OJ-",
-    "PGR",
-]
-
-PRIORITY_C = [
-    "Procuraduría de la Ética Pública",
-    "Notaría del Estado",
-    "Derecho Público",
-]
-
-SEARCH_KEYWORDS = PRIORITY_A + PRIORITY_B + PRIORITY_C
-
-# =====================================================
+ARCHIVE_URL = "https://www.pgr.go.cr/publicaciones/"
+TIMEOUT = 25
+HEADERS = {"User-Agent": "MetaCrawler/1.0"}
 
 
-def safe(name: str) -> str:
-    return "".join(c if c.isalnum() or c in "._-" else "_" for c in name).strip("_")
-
-
-def is_pdf_response(resp: requests.Response) -> bool:
-    if not resp or resp.status_code != 200:
-        return False
-    ct = (resp.headers.get("Content-Type") or "").lower()
-    head = resp.content[:8] if resp.content else b""
-    return ("pdf" in ct or "octet-stream" in ct) and head.startswith(b"%PDF")
-
-
-def extract_post_links(html: str) -> list[str]:
-    soup = BeautifulSoup(html, "html.parser")
-    links = []
-
-    for a in soup.find_all("a", href=True):
-        href = a["href"]
-        if "/publicaciones/" in href:
-            links.append(href)
-
-    return list(dict.fromkeys(links))
-
-
-def extract_pdf_links(html: str, base_url: str) -> list[str]:
-    soup = BeautifulSoup(html, "html.parser")
-    links = []
-
-    for a in soup.find_all("a", href=True):
-        href = a["href"].strip()
-        if href.lower().endswith(".pdf"):
-            links.append(urljoin(base_url, href))
-
-    return list(dict.fromkeys(links))
-
-
-def download_pdf(session, pdf_url: str, dest: Path) -> bool:
+def _read_state(path):
     try:
-        r = session.get(
-            pdf_url,
-            timeout=REQUEST_TIMEOUT,
-            allow_redirects=True,
-            headers={
-                "User-Agent": "Mozilla/5.0 (FileForgeAI)",
-                "Accept": "application/pdf,application/octet-stream;q=0.9,*/*;q=0.8",
-                "Referer": pdf_url,
-            },
-        )
-    except Exception:
-        return False
-
-    if not is_pdf_response(r):
-        return False
-
-    dest.write_bytes(r.content)
-    return True
+        raw = path.read_text(encoding="utf-8").strip()
+        data = {} if raw in ("", "{}", "done") else json.loads(raw)
+    except FileNotFoundError:
+        data = {}
+    if not isinstance(data, dict):
+        raise ValueError("PGR state must be an object")
+    state = {"page_url": ARCHIVE_URL, "post_index": 0, "pdf_index": 0,
+             "seen_posts": [], "seen_pdfs": []}
+    state.update(data)
+    if (urlparse(state["page_url"]).netloc != "www.pgr.go.cr"
+            or any(not isinstance(state[key], int) or state[key] < 0
+                   for key in ("post_index", "pdf_index"))
+            or any(not isinstance(state[key], list) for key in ("seen_posts", "seen_pdfs"))):
+        raise ValueError("invalid PGR state")
+    return state
 
 
-# =====================================================
-# MAIN ENTRY
-# =====================================================
+def _save_state(path, state):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temp = tempfile.mkstemp(prefix=".pgr-", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(state, handle, ensure_ascii=False)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp, path)
+    finally:
+        if os.path.exists(temp):
+            os.unlink(temp)
 
-def download_one(source: dict) -> str:
-    """
-    CRAWLER CONTRACT — OBLIGATORIO
 
-    - Máximo 1 archivo por ejecución
-    - Navegación permitida
-    - Retorno inmediato tras 1 descarga
-    - Si no descarga nada → "skipped"
-    """
+def extract_post_links(html, base_url):
+    soup = BeautifulSoup(html, "html.parser")
+    links = []
+    for article in soup.select("article.post"):
+        anchor = article.select_one("h2 a[href], h3 a[href], .post-links a[href]")
+        if anchor:
+            link = urljoin(base_url, anchor["href"].strip())
+            if urlparse(link).netloc == "www.pgr.go.cr":
+                links.append(link)
+    return list(dict.fromkeys(links))
 
-    download_dir = Path(source["download_dir"])
+
+def extract_next_page(html, base_url):
+    soup = BeautifulSoup(html, "html.parser")
+    anchor = soup.select_one("a.next_page[href], a[rel=next][href]")
+    if anchor:
+        link = urljoin(base_url, anchor["href"].strip())
+        if urlparse(link).netloc == "www.pgr.go.cr" and link != base_url:
+            return link
+    return None
+
+
+def extract_pdf_links(html, base_url):
+    soup = BeautifulSoup(html, "html.parser")
+    links = []
+    content = soup.find("main") or soup
+    for anchor in content.select("a[href]"):
+        link = urljoin(base_url, anchor["href"].strip())
+        if urlparse(link).scheme == "https" and urlparse(link).path.lower().endswith(".pdf"):
+            links.append(link)
+    return list(dict.fromkeys(links))
+
+
+def _get(session, url):
+    response = session.get(url, timeout=TIMEOUT, headers=HEADERS)
+    if response.status_code != 200 or not response.content:
+        raise requests.HTTPError(f"HTTP {response.status_code} or empty response", response=response)
+    return response
+
+
+def _failed(exc, url):
+    response = getattr(exc, "response", None)
+    return CrawlerResult("failed", "PGR request failed; cursor retained", "pgr",
+                         attempted_url=url, http_status=getattr(response, "status_code", None),
+                         error_type=type(exc).__name__, error_message=str(exc), retryable=True)
+
+
+def _save_failed(exc, url):
+    return CrawlerResult("failed", "PGR persistence failed; cursor retained", "pgr",
+                         attempted_url=url, error_type=type(exc).__name__,
+                         error_message=str(exc), retryable=True)
+
+
+def _filename(url):
+    stem = "".join(c if c.isalnum() or c in "._-" else "_" for c in Path(urlparse(url).path).stem)[:100]
+    return f"{stem or 'publicacion'}_{hashlib.sha256(url.encode()).hexdigest()[:12]}.pdf"
+
+
+def download_one(source):
+    """Inspect one archive page and publish no more than one PDF."""
+    directory = Path(source["download_dir"])
     state_file = Path(source["state_file"])
-    mode = source.get("mode", "incremental")
-
-    download_dir.mkdir(parents=True, exist_ok=True)
-
+    directory.mkdir(parents=True, exist_ok=True)
+    try:
+        state = _read_state(state_file)
+    except (OSError, ValueError, TypeError) as exc:
+        return CrawlerResult("manual_review", "invalid PGR cursor", "pgr",
+                             error_type=type(exc).__name__, error_message=str(exc))
     session = requests.Session()
-
-    for keyword in SEARCH_KEYWORDS:
-        search_url = BASE_SEARCH_URL.format(query=keyword.replace(" ", "+"))
-
+    page_url = state["page_url"]
+    try:
+        page = _get(session, page_url)
+    except requests.RequestException as exc:
+        return _failed(exc, page_url)
+    posts = extract_post_links(page.text, page.url)
+    next_page = extract_next_page(page.text, page.url)
+    if not posts:
+        if page_url != ARCHIVE_URL and not next_page:
+            state["page_url"] = ARCHIVE_URL
+            state["post_index"], state["pdf_index"] = 0, 0
+            _save_state(state_file, state)
+            return CrawlerResult("no_new_documents", "PGR archive ended", "pgr",
+                                 attempted_url=page.url)
+        return CrawlerResult("site_changed", "PGR archive has no publication entries", "pgr",
+                             attempted_url=page.url, retryable=True)
+    for index in range(state["post_index"], len(posts)):
+        post_url = posts[index]
+        if post_url in state["seen_posts"]:
+            state["post_index"], state["pdf_index"] = index + 1, 0
+            _save_state(state_file, state)
+            continue
         try:
-            r = session.get(
-                search_url,
-                timeout=REQUEST_TIMEOUT,
-                headers={
-                    "User-Agent": "Mozilla/5.0 (FileForgeAI)",
-                    "Accept": "text/html,application/xhtml+xml",
-                },
-            )
-        except Exception:
-            continue
-
-        if r.status_code != 200 or not r.text:
-            continue
-
-        post_links = extract_post_links(r.text)
-        if not post_links:
-            continue
-
-        for post_url in post_links:
+            post = _get(session, post_url)
+        except requests.RequestException as exc:
+            return _failed(exc, post_url)
+        pdfs = extract_pdf_links(post.text, post.url)
+        start = state["pdf_index"] if index == state["post_index"] else 0
+        for pdf_index in range(start, len(pdfs)):
+            pdf_url = pdfs[pdf_index]
+            legacy = directory / Path(urlparse(pdf_url).path).name
+            dest = directory / _filename(pdf_url)
+            if pdf_url in state["seen_pdfs"] or legacy.exists() or dest.exists():
+                if pdf_url not in state["seen_pdfs"]:
+                    state["seen_pdfs"].append(pdf_url)
+                state["post_index"], state["pdf_index"] = index, pdf_index + 1
+                _save_state(state_file, state)
+                continue
             try:
-                pr = session.get(
-                    post_url,
-                    timeout=REQUEST_TIMEOUT,
-                    headers={
-                        "User-Agent": "Mozilla/5.0 (FileForgeAI)",
-                        "Accept": "text/html,application/xhtml+xml",
-                    },
-                )
-            except Exception:
-                continue
-
-            if pr.status_code != 200 or not pr.text:
-                continue
-
-            pdf_links = extract_pdf_links(pr.text, post_url)
-            if not pdf_links:
-                continue
-
-            for pdf_url in pdf_links:
-                name = os.path.basename(urlparse(pdf_url).path)
-                name = safe(name if name.lower().endswith(".pdf") else f"{name}.pdf")
-                dest = download_dir / name
-
-                if dest.exists() and mode == "incremental":
-                    continue
-
-                if download_pdf(session, pdf_url, dest):
-                    state_file.write_text("done", encoding="utf-8")
-                    return "downloaded"
-
-        # si este keyword no dio resultado, pasar al siguiente
-
-    state_file.write_text("done", encoding="utf-8")
-    return "skipped"
+                pdf = _get(session, pdf_url)
+            except requests.RequestException as exc:
+                return _failed(exc, pdf_url)
+            if not pdf.content.startswith(b"%PDF") or b"%%EOF" not in pdf.content[-2048:]:
+                return CrawlerResult("invalid_document", "invalid PGR PDF; cursor retained", "pgr",
+                                     attempted_url=pdf_url, http_status=pdf.status_code, retryable=True)
+            try:
+                created = save_download(pdf.content, dest, pdf.url)
+            except (OSError, ValueError) as exc:
+                return _save_failed(exc, pdf_url)
+            if not created:
+                return CrawlerResult("manual_review", "PGR destination appeared; cursor retained", "pgr",
+                                     attempted_url=pdf_url)
+            state["seen_pdfs"].append(pdf_url)
+            state["post_index"], state["pdf_index"] = index, pdf_index + 1
+            _save_state(state_file, state)
+            return "downloaded"
+        state["seen_posts"].append(post_url)
+        state["post_index"], state["pdf_index"] = index + 1, 0
+        _save_state(state_file, state)
+    state["page_url"] = next_page or ARCHIVE_URL
+    state["post_index"], state["pdf_index"] = 0, 0
+    _save_state(state_file, state)
+    return CrawlerResult("no_new_documents", "PGR archive page completed", "pgr",
+                         attempted_url=page.url)

@@ -4,10 +4,12 @@ import yaml
 import time
 import sys
 import json
+import re
 import uuid
 import traceback
 from pathlib import Path
 from datetime import datetime
+from urllib.parse import urlsplit, urlunsplit
 
 # -------------------------------------------------
 # Asegurar Backend como raíz importable
@@ -28,6 +30,43 @@ from config.runtime import validate_data_root
 # =====================================================
 
 SOURCES_FILE = CODE_DIR / "sources.yaml"
+
+_URL_PATTERN = re.compile(r"https?://[^\s\"'<>]+", re.IGNORECASE)
+_AUTH_HEADER_PATTERN = re.compile(r"(?i)\b(authorization\s*[:=]\s*)(?:(Bearer|Basic)\s+)?([^\s,;&]+)")
+_SECRET_PATTERN = re.compile(
+    r"(?i)\b((?:api[_-]?key|access[_-]?token|refresh[_-]?token|password|secret|credential|signature|token|session|auth|sig|key)\s*[:=]\s*)([^\s,;&]+)"
+)
+_BEARER_PATTERN = re.compile(r"(?i)\b(Bearer\s+)[^\s,;]+")
+_BASIC_PATTERN = re.compile(r"(?i)\b(Basic\s+)[^\s,;]+")
+
+
+def _redact_log_value(value):
+    """Keep diagnostics useful without publishing URL queries or credentials."""
+    if isinstance(value, dict):
+        return {key: _redact_log_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_redact_log_value(item) for item in value]
+    if not isinstance(value, str):
+        return value
+
+    def redact_url(match):
+        raw = match.group()
+        # Sentence punctuation is not part of the URL.
+        url = raw.rstrip(".,;)")
+        suffix = raw[len(url):]
+        try:
+            parts = urlsplit(url)
+        except ValueError:
+            return "[REDACTED URL]" + suffix
+        host = parts.netloc.rsplit("@", 1)[-1]
+        return urlunsplit((parts.scheme, host, parts.path, "", "")) + suffix
+
+    value = _URL_PATTERN.sub(redact_url, value)
+    value = _AUTH_HEADER_PATTERN.sub(
+        lambda match: match.group(1) + (match.group(2) + " " if match.group(2) else "") + "[REDACTED]", value)
+    value = _SECRET_PATTERN.sub(lambda match: match.group(1) + "[REDACTED]", value)
+    value = _BEARER_PATTERN.sub(lambda match: match.group(1) + "[REDACTED]", value)
+    return _BASIC_PATTERN.sub(lambda match: match.group(1) + "[REDACTED]", value)
 
 # =====================================================
 # MANAGER
@@ -77,7 +116,7 @@ class CrawlerManager:
     # -------------------------------------------------
 
     def log(self, msg: str):
-        line = f"[{datetime.utcnow().isoformat()}] {msg}"
+        line = f"[{datetime.utcnow().isoformat()}] {_redact_log_value(msg)}"
         print(line)
         if self.log_file:
             with open(self.log_file, "a", encoding="utf-8") as f:
@@ -85,7 +124,8 @@ class CrawlerManager:
 
     def event(self, event: str, **fields):
         payload = {"timestamp": datetime.utcnow().isoformat() + "Z", "run_id": self.run_id,
-                   "client": self.client, "country": self.country, "event": event, **fields}
+                   "client": self.client, "country": self.country, "event": event,
+                   **_redact_log_value(fields)}
         if self.jsonl_file:
             with open(self.jsonl_file, "a", encoding="utf-8") as f:
                 f.write(json.dumps(payload, ensure_ascii=False, default=str) + "\n")
@@ -238,11 +278,10 @@ class CrawlerManager:
 
         except Exception as e:
             self.stats["failed"] += 1
-            self.log(f"❌ Error {source_id}: {e}")
             result = CrawlerResult("failed", "crawler raised an exception", source_id,
                                    error_type=type(e).__name__, error_message=str(e), retryable=True)
-            self.event("task_end", source=source_id, duration_seconds=time.monotonic()-started,
-                       result_status=result.status, reason=result.reason, exception=traceback.format_exc(), retryable=True)
+            self._log_failure(result)
+            self._log_task_end(result, time.monotonic()-started, exception=traceback.format_exc())
             return result
 
         result = normalize_result(raw_result, source_id)
@@ -250,11 +289,28 @@ class CrawlerManager:
             self.stats["downloaded"] += 1
         elif result.status == "failed": self.stats["failed"] += 1
         else: self.stats["skipped"] += 1
-        self.event("task_end", source=source_id, duration_seconds=time.monotonic()-started,
-                   result_status=result.status, reason=result.reason, retryable=result.retryable,
-                   retry_at=result.retry_at, downloaded_path=result.downloaded_path,
-                   content_hash=result.content_hash)
+        if result.status == "failed":
+            self._log_failure(result)
+        self._log_task_end(result, time.monotonic()-started)
         return result
+
+    def _log_failure(self, result: CrawlerResult):
+        category = result.error_type or result.status
+        http = f" | HTTP {result.http_status}" if result.http_status is not None else ""
+        description = (f"{result.reason}: {result.error_message}"
+                       if result.error_message else result.reason)
+        description = re.sub(r"\s+", " ", description).strip()
+        if len(description) > 300:
+            description = description[:297] + "..."
+        self.log(f"❌ {result.source_id} | {category}{http} | {description}")
+
+    def _log_task_end(self, result: CrawlerResult, duration_seconds: float, **extra):
+        details = result.to_dict()
+        details.pop("status")
+        details.pop("source_id")
+        result_timestamp = details.pop("timestamp")
+        self.event("task_end", source=result.source_id, duration_seconds=duration_seconds,
+                   result_status=result.status, **details, result_timestamp=result_timestamp, **extra)
 
     # -------------------------------------------------
 
