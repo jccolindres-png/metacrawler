@@ -4,6 +4,8 @@ import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
 from pathlib import Path
+from core.results import CrawlerResult
+from core.source_sidecar import save_download
 
 
 FALLO_PATH = "/BusquedaAPI/DetalleFallo?fallo="
@@ -43,9 +45,15 @@ def download_one(source: dict) -> str:
 
     # estado: último fallo intentado
     try:
-        last_id = int(state_file.read_text(encoding="utf-8").strip())
-    except Exception:
+        raw = state_file.read_text(encoding="utf-8").strip()
+        last_id = 0 if raw in ("", "{}") else int(raw)
+        if last_id < 0:
+            raise ValueError("negative Poder Judicial cursor")
+    except FileNotFoundError:
         last_id = 0
+    except (OSError, ValueError) as exc:
+        return CrawlerResult("manual_review", "invalid Poder Judicial cursor", "poder_judicial",
+                             error_type=type(exc).__name__, error_message=str(exc))
 
     # 🔒 SOLO un ID por ejecución
     current_id = last_id + 1
@@ -53,13 +61,18 @@ def download_one(source: dict) -> str:
 
     try:
         page = requests.get(url, timeout=15)
-    except Exception:
-        state_file.write_text(str(current_id), encoding="utf-8")
-        return "skipped"
+    except requests.RequestException as exc:
+        return CrawlerResult("failed", "Poder Judicial detail request failed; cursor retained", "poder_judicial",
+                             attempted_url=url, http_status=getattr(getattr(exc, "response", None), "status_code", None),
+                             error_type=type(exc).__name__, error_message=str(exc), retryable=True)
 
-    if page.status_code != 200 or not page.text:
-        state_file.write_text(str(current_id), encoding="utf-8")
-        return "skipped"
+    if page.status_code != 200:
+        return CrawlerResult("failed", "Poder Judicial detail HTTP failure; cursor retained", "poder_judicial",
+                             attempted_url=url, http_status=page.status_code,
+                             error_type="HTTPError", error_message=f"HTTP {page.status_code}", retryable=True)
+    if not page.text:
+        return CrawlerResult("site_changed", "empty Poder Judicial detail; cursor retained", "poder_judicial",
+                             attempted_url=url, http_status=page.status_code, retryable=True)
 
     soup = BeautifulSoup(page.text, "html.parser")
 
@@ -70,27 +83,50 @@ def download_one(source: dict) -> str:
     )
 
     if not link:
-        state_file.write_text(str(current_id), encoding="utf-8")
-        return "skipped"
+        return CrawlerResult("site_changed", "Poder Judicial PDF link missing; cursor retained", "poder_judicial",
+                             attempted_url=url, http_status=page.status_code, retryable=True)
 
     pdf_url = urljoin(url + "/", link["href"])
     filename = f"fallo_{current_id}.pdf"
     dest = download_dir / filename
 
-    if dest.exists() and mode == "incremental":
-        state_file.write_text(str(current_id), encoding="utf-8")
-        return "skipped"
-
     try:
         pdf = requests.get(pdf_url, timeout=20)
-    except Exception:
-        state_file.write_text(str(current_id), encoding="utf-8")
-        return "skipped"
+    except requests.RequestException as exc:
+        return CrawlerResult("failed", "Poder Judicial PDF request failed; cursor retained", "poder_judicial",
+                             attempted_url=pdf_url, http_status=getattr(getattr(exc, "response", None), "status_code", None),
+                             error_type=type(exc).__name__, error_message=str(exc), retryable=True)
 
+    if pdf.status_code != 200:
+        return CrawlerResult("failed", "Poder Judicial PDF HTTP failure; cursor retained", "poder_judicial",
+                             attempted_url=pdf_url, http_status=pdf.status_code,
+                             error_type="HTTPError", error_message=f"HTTP {pdf.status_code}", retryable=True)
     if not _is_pdf_response(pdf):
-        state_file.write_text(str(current_id), encoding="utf-8")
-        return "skipped"
+        return CrawlerResult("invalid_document", "invalid Poder Judicial PDF; cursor retained", "poder_judicial",
+                             attempted_url=pdf_url, http_status=pdf.status_code, retryable=True)
 
-    dest.write_bytes(pdf.content)
+    if dest.exists():
+        try:
+            same = dest.is_file() and dest.read_bytes() == pdf.content
+        except OSError as exc:
+            return CrawlerResult("failed", "Poder Judicial duplicate check failed; cursor retained", "poder_judicial",
+                                 attempted_url=pdf_url, error_type=type(exc).__name__,
+                                 error_message=str(exc), retryable=True)
+        if not same:
+            return CrawlerResult("manual_review", "Poder Judicial destination differs; cursor retained", "poder_judicial",
+                                 attempted_url=pdf_url)
+        state_file.write_text(str(current_id), encoding="utf-8")
+        return CrawlerResult("duplicate", "Poder Judicial PDF already present", "poder_judicial",
+                             attempted_url=pdf_url, downloaded_path=str(dest))
+
+    try:
+        created = save_download(pdf.content, dest, pdf.url)
+    except (OSError, ValueError) as exc:
+        return CrawlerResult("failed", "Poder Judicial persistence failed; cursor retained", "poder_judicial",
+                             attempted_url=pdf_url, error_type=type(exc).__name__,
+                             error_message=str(exc), retryable=True)
+    if not created:
+        return CrawlerResult("manual_review", "Poder Judicial destination appeared; cursor retained", "poder_judicial",
+                             attempted_url=pdf_url)
     state_file.write_text(str(current_id), encoding="utf-8")
     return "downloaded"

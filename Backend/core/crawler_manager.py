@@ -30,6 +30,7 @@ from config.runtime import validate_data_root
 # =====================================================
 
 SOURCES_FILE = CODE_DIR / "sources.yaml"
+FAILURE_STATUSES = {"failed", "temporarily_blocked", "site_changed", "invalid_document", "manual_review"}
 
 _URL_PATTERN = re.compile(r"https?://[^\s\"'<>]+", re.IGNORECASE)
 _AUTH_HEADER_PATTERN = re.compile(r"(?i)\b(authorization\s*[:=]\s*)(?:(Bearer|Basic)\s+)?([^\s,;&]+)")
@@ -287,9 +288,9 @@ class CrawlerManager:
         result = normalize_result(raw_result, source_id)
         if result.status == "downloaded":
             self.stats["downloaded"] += 1
-        elif result.status == "failed": self.stats["failed"] += 1
+        elif result.status in FAILURE_STATUSES: self.stats["failed"] += 1
         else: self.stats["skipped"] += 1
-        if result.status == "failed":
+        if result.status in FAILURE_STATUSES:
             self._log_failure(result)
         self._log_task_end(result, time.monotonic()-started)
         return result

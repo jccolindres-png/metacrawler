@@ -5,6 +5,8 @@ import requests
 from pathlib import Path
 from urllib.parse import urlparse
 from datetime import date
+from core.results import CrawlerResult
+from core.source_sidecar import save_download
 
 REQUEST_TIMEOUT = 25
 
@@ -48,9 +50,15 @@ def download_one(source: dict) -> str:
 
     # estado = índice de patrón
     try:
-        idx = int(state_file.read_text(encoding="utf-8").strip())
-    except Exception:
+        raw = state_file.read_text(encoding="utf-8").strip()
+        idx = 0 if raw in ("", "{}") else int(raw)
+        if idx < 0:
+            raise ValueError("negative Trámites cursor")
+    except FileNotFoundError:
         idx = 0
+    except (OSError, ValueError) as exc:
+        return CrawlerResult("manual_review", "invalid Trámites cursor", "tramites",
+                             error_type=type(exc).__name__, error_message=str(exc))
 
     # patrones conocidos de Trámites Costa Rica
     patterns = [
@@ -64,7 +72,7 @@ def download_one(source: dict) -> str:
     ]
 
     if idx >= len(patterns):
-        return "skipped"
+        return CrawlerResult("exhausted", "Trámites patterns exhausted", "tramites")
 
     base_url = base_urls[0].rstrip("/")
     rel_path = patterns[idx]
@@ -82,23 +90,46 @@ def download_one(source: dict) -> str:
                 "Accept": "application/pdf,application/octet-stream;q=0.9,*/*;q=0.8",
             },
         )
-    except Exception:
-        state_file.write_text(str(idx + 1), encoding="utf-8")
-        return "skipped"
+    except requests.RequestException as exc:
+        return CrawlerResult("failed", "Trámites request failed; cursor retained", "tramites",
+                             attempted_url=pdf_url, http_status=getattr(getattr(exc, "response", None), "status_code", None),
+                             error_type=type(exc).__name__, error_message=str(exc), retryable=True)
 
+    if r.status_code != 200:
+        return CrawlerResult("failed", "Trámites HTTP failure; cursor retained", "tramites",
+                             attempted_url=pdf_url, http_status=r.status_code,
+                             error_type="HTTPError", error_message=f"HTTP {r.status_code}", retryable=True)
     if not is_pdf_response(r):
-        state_file.write_text(str(idx + 1), encoding="utf-8")
-        return "skipped"
+        return CrawlerResult("invalid_document", "invalid Trámites PDF; cursor retained", "tramites",
+                             attempted_url=pdf_url, http_status=r.status_code, retryable=True)
 
     name = os.path.basename(urlparse(pdf_url).path)
     today = date.today().isoformat()
     filename = safe(f"tramites_{today}_{name}")
     dest = download_dir / filename
 
-    if dest.exists() and mode == "incremental":
+    if dest.exists():
+        try:
+            same = dest.is_file() and dest.read_bytes() == r.content
+        except OSError as exc:
+            return CrawlerResult("failed", "Trámites duplicate check failed; cursor retained", "tramites",
+                                 attempted_url=pdf_url, error_type=type(exc).__name__,
+                                 error_message=str(exc), retryable=True)
+        if not same:
+            return CrawlerResult("manual_review", "Trámites destination differs; cursor retained", "tramites",
+                                 attempted_url=pdf_url)
         state_file.write_text(str(idx + 1), encoding="utf-8")
-        return "skipped"
+        return CrawlerResult("duplicate", "Trámites PDF already present", "tramites",
+                             attempted_url=pdf_url, downloaded_path=str(dest))
 
-    dest.write_bytes(r.content)
+    try:
+        created = save_download(r.content, dest, r.url)
+    except (OSError, ValueError) as exc:
+        return CrawlerResult("failed", "Trámites persistence failed; cursor retained", "tramites",
+                             attempted_url=pdf_url, error_type=type(exc).__name__,
+                             error_message=str(exc), retryable=True)
+    if not created:
+        return CrawlerResult("manual_review", "Trámites destination appeared; cursor retained", "tramites",
+                             attempted_url=pdf_url)
     state_file.write_text(str(idx + 1), encoding="utf-8")
     return "downloaded"

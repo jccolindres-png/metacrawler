@@ -4,6 +4,8 @@ import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
 from pathlib import Path
+from core.source_sidecar import save_download
+from core.results import CrawlerResult
 import os
 
 
@@ -43,13 +45,27 @@ def download_one(source: dict) -> str:
     mode = source.get("mode", "incremental")
 
     session = requests.Session()
+    first_failure = None
 
     for base_url in base_urls:
         try:
             r = session.get(base_url, timeout=15)
-            if r.status_code != 200 or not r.text:
-                continue
-        except Exception:
+        except requests.RequestException as exc:
+            first_failure = first_failure or CrawlerResult(
+                "failed", "UNA page request failed; cursor retained", "una_repositorio",
+                attempted_url=base_url, error_type=type(exc).__name__,
+                error_message=str(exc), retryable=True)
+            continue
+        if r.status_code != 200:
+            first_failure = first_failure or CrawlerResult(
+                "failed", "UNA page HTTP failure; cursor retained", "una_repositorio",
+                attempted_url=base_url, http_status=r.status_code,
+                error_type="HTTPError", error_message=f"HTTP {r.status_code}", retryable=True)
+            continue
+        if not r.text:
+            first_failure = first_failure or CrawlerResult(
+                "site_changed", "empty UNA page; cursor retained", "una_repositorio",
+                attempted_url=base_url, http_status=r.status_code, retryable=True)
             continue
 
         soup = BeautifulSoup(r.text, "html.parser")
@@ -65,22 +81,47 @@ def download_one(source: dict) -> str:
             filename = safe(os.path.basename(href))
             dest = download_dir / filename
 
-            if dest.exists() and mode == "incremental":
+            if dest.exists():
                 continue
 
             try:
                 pdf = session.get(pdf_url, timeout=20)
-                if not _is_pdf_response(pdf):
-                    continue
-
-                dest.write_bytes(pdf.content)
-                state_file.write_text("done", encoding="utf-8")
-                return "downloaded"
-
-            except Exception:
+            except requests.RequestException as exc:
+                first_failure = first_failure or CrawlerResult(
+                    "failed", "UNA PDF request failed; cursor retained", "una_repositorio",
+                    attempted_url=pdf_url, error_type=type(exc).__name__,
+                    error_message=str(exc), retryable=True)
                 continue
+            if pdf.status_code != 200:
+                first_failure = first_failure or CrawlerResult(
+                    "failed", "UNA PDF HTTP failure; cursor retained", "una_repositorio",
+                    attempted_url=pdf_url, http_status=pdf.status_code,
+                    error_type="HTTPError", error_message=f"HTTP {pdf.status_code}", retryable=True)
+                continue
+            if not _is_pdf_response(pdf):
+                first_failure = first_failure or CrawlerResult(
+                    "invalid_document", "invalid UNA PDF; cursor retained", "una_repositorio",
+                    attempted_url=pdf_url, http_status=pdf.status_code, retryable=True)
+                continue
+            try:
+                created = save_download(pdf.content, dest, pdf.url)
+            except (OSError, ValueError) as exc:
+                first_failure = first_failure or CrawlerResult(
+                    "failed", "UNA persistence failed; cursor retained", "una_repositorio",
+                    attempted_url=pdf_url, error_type=type(exc).__name__,
+                    error_message=str(exc), retryable=True)
+                continue
+            if not created:
+                first_failure = first_failure or CrawlerResult(
+                    "manual_review", "UNA destination appeared; cursor retained", "una_repositorio",
+                    attempted_url=pdf_url)
+                continue
+            state_file.write_text("done", encoding="utf-8")
+            return "downloaded"
 
         # esta URL no dio PDF → pasar a la siguiente
 
+    if first_failure:
+        return first_failure
     state_file.write_text("done", encoding="utf-8")
     return "skipped"

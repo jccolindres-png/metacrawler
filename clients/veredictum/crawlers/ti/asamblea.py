@@ -5,6 +5,8 @@ import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse, parse_qs
 from pathlib import Path
+from core.results import CrawlerResult
+from core.source_sidecar import save_download
 
 REQUEST_TIMEOUT = 30
 
@@ -74,7 +76,7 @@ def extract_pdf_links(html: str, base_url: str) -> list[str]:
     return out
 
 
-def download_pdf(session: requests.Session, pdf_url: str, dest: Path) -> bool:
+def download_pdf(session: requests.Session, pdf_url: str, dest: Path):
     try:
         r = session.get(
             pdf_url,
@@ -86,17 +88,29 @@ def download_pdf(session: requests.Session, pdf_url: str, dest: Path) -> bool:
                 "Referer": pdf_url,
             },
         )
-    except Exception:
-        return False
+    except requests.RequestException as exc:
+        return CrawlerResult("failed", "Asamblea PDF request failed; cursor retained", "asamblea",
+                             attempted_url=pdf_url, http_status=getattr(getattr(exc, "response", None), "status_code", None),
+                             error_type=type(exc).__name__, error_message=str(exc), retryable=True)
 
+    if r.status_code != 200:
+        return CrawlerResult("failed", "Asamblea PDF HTTP failure; cursor retained", "asamblea",
+                             attempted_url=pdf_url, http_status=r.status_code,
+                             error_type="HTTPError", error_message=f"HTTP {r.status_code}", retryable=True)
     if not is_pdf_response(r):
-        return False
+        return CrawlerResult("invalid_document", "invalid Asamblea PDF; cursor retained", "asamblea",
+                             attempted_url=pdf_url, http_status=r.status_code, retryable=True)
 
     try:
-        dest.write_bytes(r.content)
-        return True
-    except Exception:
-        return False
+        created = save_download(r.content, dest, r.url)
+    except (OSError, ValueError) as exc:
+        return CrawlerResult("failed", "Asamblea persistence failed; cursor retained", "asamblea",
+                             attempted_url=pdf_url, error_type=type(exc).__name__,
+                             error_message=str(exc), retryable=True)
+    if not created:
+        return CrawlerResult("manual_review", "Asamblea destination appeared; cursor retained", "asamblea",
+                             attempted_url=pdf_url)
+    return "downloaded"
 
 
 # -------------------------------------------------
@@ -124,6 +138,7 @@ def download_one(source: dict) -> str:
         return "skipped"
 
     session = requests.Session()
+    first_failure = None
 
     for target in targets:
         base_url = target.get("url")
@@ -144,10 +159,23 @@ def download_one(source: dict) -> str:
                     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
                 },
             )
-        except Exception:
+        except requests.RequestException as exc:
+            first_failure = first_failure or CrawlerResult(
+                "failed", "Asamblea page request failed; cursor retained", "asamblea",
+                attempted_url=base_url, http_status=getattr(getattr(exc, "response", None), "status_code", None),
+                error_type=type(exc).__name__, error_message=str(exc), retryable=True)
             continue
 
-        if page.status_code != 200 or not page.text:
+        if page.status_code != 200:
+            first_failure = first_failure or CrawlerResult(
+                "failed", "Asamblea page HTTP failure; cursor retained", "asamblea",
+                attempted_url=base_url, http_status=page.status_code,
+                error_type="HTTPError", error_message=f"HTTP {page.status_code}", retryable=True)
+            continue
+        if not page.text:
+            first_failure = first_failure or CrawlerResult(
+                "site_changed", "empty Asamblea page; cursor retained", "asamblea",
+                attempted_url=base_url, http_status=page.status_code, retryable=True)
             continue
 
         pdf_links = extract_pdf_links(page.text, base_url)
@@ -159,14 +187,19 @@ def download_one(source: dict) -> str:
             name = safe(name if ".pdf" in name.lower() else f"{name}.pdf")
             dest = lib_dir / name
 
-            if dest.exists() and mode == "incremental":
+            if dest.exists():
                 continue
 
-            if download_pdf(session, pdf_url, dest):
+            outcome = download_pdf(session, pdf_url, dest)
+            if outcome == "downloaded":
                 state_file.write_text("done", encoding="utf-8")
                 return "downloaded"
+            if isinstance(outcome, CrawlerResult):
+                first_failure = first_failure or outcome
 
         # si este target no dio PDF nuevo → RR sigue
 
+    if first_failure:
+        return first_failure
     state_file.write_text("done", encoding="utf-8")
     return "skipped"

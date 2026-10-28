@@ -6,6 +6,8 @@ from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse
 from pathlib import Path
 from datetime import date, timedelta
+from core.results import CrawlerResult
+from core.source_sidecar import save_download
 
 
 DEFAULT_START_DATE = date(2000, 1, 1)
@@ -70,18 +72,17 @@ def download_one(source: dict) -> str:
 
     download_dir.mkdir(parents=True, exist_ok=True)
 
-    if mode == "full":
-        try:
-            last = state_file.read_text(encoding="utf-8").strip()
+    try:
+        last = state_file.read_text(encoding="utf-8").strip()
+        if last in ("", "{}"):
+            current = DEFAULT_START_DATE if mode == "full" else date.today()
+        else:
             current = date.fromisoformat(last) + timedelta(days=1)
-        except Exception:
-            current = DEFAULT_START_DATE
-    else:
-        try:
-            last = state_file.read_text(encoding="utf-8").strip()
-            current = date.fromisoformat(last) + timedelta(days=1)
-        except Exception:
-            current = date.today()
+    except FileNotFoundError:
+        current = DEFAULT_START_DATE if mode == "full" else date.today()
+    except (OSError, ValueError, OverflowError) as exc:
+        return CrawlerResult("manual_review", "invalid Gaceta cursor", "gaceta",
+                             error_type=type(exc).__name__, error_message=str(exc))
 
     # ✅ ENDPOINT REAL DE LA GACETA (BUSCADOR LEGACY)
     page_url = (
@@ -101,24 +102,27 @@ def download_one(source: dict) -> str:
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             },
         )
-    except Exception:
-        state_file.write_text(current.isoformat(), encoding="utf-8")
-        return "skipped"
+    except requests.RequestException as exc:
+        return CrawlerResult("failed", "Gaceta search request failed; cursor retained", "gaceta",
+                             attempted_url=page_url, http_status=getattr(getattr(exc, "response", None), "status_code", None),
+                             error_type=type(exc).__name__, error_message=str(exc), retryable=True)
 
-    if r.status_code != 200 or not r.text:
-        state_file.write_text(current.isoformat(), encoding="utf-8")
-        return "skipped"
+    if r.status_code != 200:
+        return CrawlerResult("failed", "Gaceta search HTTP failure; cursor retained", "gaceta",
+                             attempted_url=page_url, http_status=r.status_code,
+                             error_type="HTTPError", error_message=f"HTTP {r.status_code}", retryable=True)
+    if not r.text:
+        return CrawlerResult("site_changed", "empty Gaceta search response; cursor retained", "gaceta",
+                             attempted_url=page_url, http_status=r.status_code, retryable=True)
 
     pdf_links = extract_pdf_links(r.text, page_url)
 
+    duplicates = 0
     for pdf_url in pdf_links:
         name = os.path.basename(urlparse(pdf_url).path) or f"gaceta_{current.isoformat()}.pdf"
         name = safe(name if ".pdf" in name.lower() else f"{name}.pdf")
         filename = safe(f"gaceta_{current.isoformat()}_{name}")
         dest = download_dir / filename
-
-        if dest.exists() and mode == "incremental":
-            continue
 
         try:
             pdf = session.get(
@@ -131,15 +135,45 @@ def download_one(source: dict) -> str:
                     "Referer": page_url,
                 },
             )
-        except Exception:
-            continue
+        except requests.RequestException as exc:
+            return CrawlerResult("failed", "Gaceta PDF request failed; cursor retained", "gaceta",
+                                 attempted_url=pdf_url, http_status=getattr(getattr(exc, "response", None), "status_code", None),
+                                 error_type=type(exc).__name__, error_message=str(exc), retryable=True)
 
+        if pdf.status_code != 200:
+            return CrawlerResult("failed", "Gaceta PDF HTTP failure; cursor retained", "gaceta",
+                                 attempted_url=pdf_url, http_status=pdf.status_code,
+                                 error_type="HTTPError", error_message=f"HTTP {pdf.status_code}", retryable=True)
         if not is_pdf_response(pdf):
+            return CrawlerResult("invalid_document", "invalid Gaceta PDF; cursor retained", "gaceta",
+                                 attempted_url=pdf_url, http_status=pdf.status_code, retryable=True)
+
+        if dest.exists():
+            try:
+                same = dest.is_file() and dest.read_bytes() == pdf.content
+            except OSError as exc:
+                return CrawlerResult("failed", "Gaceta duplicate check failed; cursor retained", "gaceta",
+                                     attempted_url=pdf_url, error_type=type(exc).__name__,
+                                     error_message=str(exc), retryable=True)
+            if not same:
+                return CrawlerResult("manual_review", "Gaceta destination differs; cursor retained", "gaceta",
+                                     attempted_url=pdf_url)
+            duplicates += 1
             continue
 
-        dest.write_bytes(pdf.content)
+        try:
+            created = save_download(pdf.content, dest, pdf.url)
+        except (OSError, ValueError) as exc:
+            return CrawlerResult("failed", "Gaceta persistence failed; cursor retained", "gaceta",
+                                 attempted_url=pdf_url, error_type=type(exc).__name__,
+                                 error_message=str(exc), retryable=True)
+        if not created:
+            return CrawlerResult("manual_review", "Gaceta destination appeared; cursor retained", "gaceta",
+                                 attempted_url=pdf_url)
         state_file.write_text(current.isoformat(), encoding="utf-8")
         return "downloaded"
 
     state_file.write_text(current.isoformat(), encoding="utf-8")
-    return "skipped"
+    return CrawlerResult("duplicate" if duplicates else "no_new_documents",
+                         "Gaceta date already present" if duplicates else "Gaceta date has no PDF links",
+                         "gaceta", attempted_url=page_url)
