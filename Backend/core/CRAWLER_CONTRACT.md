@@ -1,4 +1,4 @@
-# CRAWLER CONTRACT — FILEFORGE / VEREDICTUM
+# CRAWLER CONTRACT — METACRAWLER
 
 Este documento define el **CONTRATO OBLIGATORIO** que **TODO crawler**
 debe cumplir para poder ejecutarse dentro del sistema de Round Robin.
@@ -66,6 +66,13 @@ El sistema está diseñado para **operar por días**, no por minutos.
   - recordar estado
   - rotar fuentes
   - volver a intentar luego
+
+### 2.6 Procedencia de cada descarga
+
+- Guardar bytes originales mediante `core.source_sidecar.save_download(data, dest, response.url)`.
+- Usar la URL **final observada en la respuesta**, incluso si hubo redirección.
+- Retornar `downloaded` solo si se guardaron el original y `<archivo>.source.json`.
+- Un nombre de archivo existente se omite; nunca se sobrescribe para completar un sidecar.
 
 ---
 

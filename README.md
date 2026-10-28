@@ -206,8 +206,121 @@ Las contribuciones, ideas y revisiones son bienvenidas, pero el foco actual es c
 📄 Licencia
 
 Pendiente de definir.
+
 ✍️ Autor
 
 JC Colindres
 Primer proyecto público.
 Construido con paciencia, necesidad real y muchas horas de depuración.
+
+## Modo Batch para leyes de Costa Rica
+
+Batch se ejecuta por separado de Discovery. Admite `veredictum/ti` con objetivos
+`jurisdiccion: "CR"`. Su base SQLite y sus documentos viven bajo
+`<METACRAWLER_DATA_ROOT>/veredictum/ti/_batch/`; no modifica los inventarios,
+planes, cursores, logs ni el deduplicador global de Discovery.
+
+El manifiesto JSON requiere `{ "objetivos": [...] }`. Cada objetivo necesita
+`target_id` y `jurisdiccion`. Puede incluir `numero_ley`, `titulo_buscado`,
+`rama`, `prioridad`, `portal_oficial` y `url_referencia_oficial` (también se admite
+`null`). Si faltan número y título, queda en revisión hasta completar la identidad.
+CSV con las mismas columnas es opcional. Una URL ausente queda pendiente;
+se asocia manualmente después de verificarla. La importación es transaccional e
+idempotente; un `target_id` existente con datos diferentes causa error sin alterar
+el estado anterior. Una URL fuera de los dominios admitidos se conserva para
+revisión y nunca se consulta automáticamente.
+
+```bash
+# Con METACRAWLER_DATA_ROOT configurado en la raíz de datos existente:
+python runner.py batch import --manifest ./veredictum_cr_batch01_manifest.json
+python runner.py batch simulate
+
+# Solo después de revisar la simulación y las URL oficiales:
+python runner.py batch resolve --target-id ID --url https://sinalevi.go.cr/ruta-verificada
+python runner.py batch identify --target-id ID --numero-ley 123 --titulo-buscado "Ley de ejemplo"
+python runner.py batch run --target-id ID
+python runner.py batch history --target-id ID
+```
+
+`batch import` y `batch simulate` no hacen solicitudes de red ni descargan archivos.
+`batch run` es la única orden que descarga. Acepta solo HTTPS en dominios oficiales
+de PGR/SINALEVI, Asamblea e Imprenta; comprueba cada redirección. Una ficha HTML
+con un solo enlace a PDF puede resolverse; una ficha ambigua queda para revisión.
+En el portal SINALEVI nuevo, admite la vista de texto completo (`param3=1`);
+fichas y artículos aislados quedan para revisión.
+Comprueba el número y título solicitados en el documento. Un PDF escaneado, sin
+texto extraíble o incompleto queda en `requiere revisión`; no se marca descargado.
+Se registran URL original y final, fecha UTC, versión normativa publicada cuando
+está disponible, versión HTTP o fecha de captura, estado, motivo, ruta y SHA-256.
+Los estados son `pendiente`, `resuelto`,
+`descargado`, `omitido`, `fallido` y `requiere revisión`. Los fallos son reintentables;
+el historial conserva cada transición y el hash del manifiesto de importación.
+`batch run` también puede ejecutarse sin `--target-id` para procesar todos los
+objetivos con URL. Los archivos se publican de manera atómica y sin sobrescritura.
+
+La validación es deliberadamente conservadora: una coincidencia dudosa requiere
+revisión humana. No hay generación automática de URL a partir de números de ley.
+Instale las dependencias de `requirements.txt` antes de ejecutar descargas de PDF.
+
+La auditoría detallada está en [AUDITORIA_BATCH.md](AUDITORIA_BATCH.md).
+
+## Colección independiente `costa_rica`
+
+El cliente `costa_rica` usa `ti` como código de país y tiene inventario propio en
+`clients/costa_rica/ti-urls.txt`. Su configuración reutiliza los módulos de crawlers
+y el clasificador existentes mediante un proveedor explícito, sin copiarlos. Sus
+planes, estado, logs y documentos se guardan exclusivamente bajo
+`<METACRAWLER_DATA_ROOT>/costa_rica/ti/`.
+
+En la VM configurada, estos comandos preparan e inspeccionan la colección **sin
+ejecutar crawlers ni descargar documentos**:
+
+```bash
+cd /srv/metacrawler/app
+export METACRAWLER_DATA_ROOT=/media/sf_fileforge-data/metacrawler
+./venv/bin/python runner.py plan --client costa_rica --country ti
+./venv/bin/python runner.py status
+```
+
+Cada nueva descarga Discovery o Batch genera `<documento>.source.json` junto al
+original. Contiene `source_url` (URL final de la respuesta), `downloaded_at_utc`,
+`sha256` y `size_bytes`. No se cambian bytes ni se crean valores de procedencia
+para documentos históricos que ya existían. Un nombre de archivo existente no se
+sobrescribe, incluso en modo completo.
+
+### Primera ejecución controlada de PGR y SINALEVI
+
+El plan de `costa_rica/ti` incluye `pgr` y `sinalevi`. Cada invocación siguiente
+selecciona solo una fuente y permite como máximo una descarga. Las rutas de datos
+se mantienen bajo `<METACRAWLER_DATA_ROOT>/costa_rica/ti/`.
+
+```bash
+cd /srv/metacrawler/app
+export METACRAWLER_DATA_ROOT=/media/sf_fileforge-data/metacrawler
+./venv/bin/python runner.py plan --client costa_rica --country ti
+
+run_one() {
+./venv/bin/python - "$1" <<'PY'
+import os
+import sys
+from pathlib import Path
+import runner
+from core.crawler_manager import CrawlerManager
+
+source_id = sys.argv[1]
+plan = Path(os.environ["METACRAWLER_DATA_ROOT"]) / "costa_rica/ti/_plans/sources.yaml"
+manager = CrawlerManager("costa_rica", "ti", only_source=source_id, plan_path=plan)
+manager.select_mode_interactively = lambda: "incremental"
+manager.run()
+PY
+}
+
+run_one pgr
+run_one sinalevi
+```
+
+SINALEVI consulta la búsqueda sencilla de normativa paginada y solicita el PDF
+al exportador oficial. Las búsquedas predeterminadas son `ley`, `decreto`,
+`reglamento`, `acuerdo` y `resolución`; otras clases no quedan cubiertas
+automáticamente. El estado anterior basado en índices del portal antiguo se
+conserva sin migrarlo y requiere revisión manual si existe.

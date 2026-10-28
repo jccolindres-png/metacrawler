@@ -4,6 +4,7 @@ import importlib
 import sys
 from pathlib import Path
 from types import ModuleType
+from core.client_provider import provider_for
 
 
 class CrawlerNotFoundError(RuntimeError):
@@ -48,7 +49,8 @@ def load_crawler(
             "Ejemplo válido : 'ti'\n"
         )
 
-    module_path = f"clients.{client}.crawlers.{country}.{source_id}"
+    provider = provider_for(client, "crawler")
+    module_path = f"clients.{provider}.crawlers.{country}.{source_id}"
 
     try:
         return importlib.import_module(module_path)

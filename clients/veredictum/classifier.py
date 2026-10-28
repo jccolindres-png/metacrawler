@@ -28,7 +28,14 @@ class Classifier:
                 "subfolder": None
             }
 
-        if "pgr.go.cr" in domain or "pgrweb.go.cr" in domain:
+        if domain in ("sinalevi.go.cr", "pgrweb.go.cr"):
+            return {
+                "source_id": "sinalevi",
+                "crawler": "sinalevi",
+                "subfolder": None
+            }
+
+        if "pgr.go.cr" in domain:
             return {
                 "source_id": "pgr",
                 "crawler": "pgr",

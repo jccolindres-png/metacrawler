@@ -99,7 +99,7 @@ sources:
 
       - id: sinalevi
         name: SINALEVI – Sistema Nacional de Legislación Vigente
-        url: https://www.pgrweb.go.cr/scij/
+        url: https://sinalevi.go.cr/
 
   - id: poder_judicial
     name: Poder Judicial

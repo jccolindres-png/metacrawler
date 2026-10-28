@@ -2,6 +2,7 @@ import importlib
 import sys
 from pathlib import Path
 from urllib.parse import urlparse
+from core.client_provider import provider_for
 
 
 # -------------------------------------------------
@@ -34,7 +35,11 @@ class NullClassifier:
         if "imprentanacional.go.cr" in domain:
             return {"source_id": "gaceta", "subfolder": None}
 
-        if "pgr.go.cr" in domain or "pgrweb.go.cr" in domain:
+        if domain in ("sinalevi.go.cr", "www.sinalevi.go.cr",
+                      "pgrweb.go.cr", "www.pgrweb.go.cr"):
+            return {"source_id": "sinalevi", "subfolder": None}
+
+        if "pgr.go.cr" in domain:
             return {"source_id": "pgr", "subfolder": None}
 
         if "poder-judicial.go.cr" in domain:
@@ -62,7 +67,7 @@ def load_classifier(client_name: str):
     Si falla, usa NullClassifier (seguro).
     """
 
-    module_path = f"clients.{client_name}.classifier"
+    module_path = f"clients.{provider_for(client_name, 'classifier')}.classifier"
 
     try:
         module = importlib.import_module(module_path)

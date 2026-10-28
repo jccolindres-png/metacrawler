@@ -88,10 +88,12 @@ def bootstrap(client: str, country: str | None, urls_file: str, output_file=None
         if source_id not in sources:
             sources[source_id] = {
                 "urls": [],
+                "targets": [],
                 "subfolder": subfolder
             }
 
         sources[source_id]["urls"].append(url)
+        sources[source_id]["targets"].append({"url": url})
 
     sources_yaml = {
         "client": client,
@@ -104,6 +106,7 @@ def bootstrap(client: str, country: str | None, urls_file: str, output_file=None
         sources_yaml["sources"].append({
             "id": source_id,
             "base_urls": info["urls"],
+            "targets": info["targets"],
             "subfolder": info["subfolder"]
         })
 

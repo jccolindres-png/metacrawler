@@ -1,0 +1,26 @@
+country: ti
+name: Costa Rica - colección documental independiente
+sources:
+  - id: asamblea
+    targets:
+      - url: https://www.asamblea.go.cr/sd/Documents/Forms/WebFldr.aspx
+  - id: gaceta
+    targets:
+      - url: https://www.imprentanacional.go.cr/gaceta/
+  - id: pgr
+    targets:
+      - url: https://www.pgr.go.cr/
+  - id: sinalevi
+    targets:
+      - url: https://sinalevi.go.cr/
+  - id: poder_judicial
+    targets:
+      - url: https://juris.poder-judicial.go.cr/
+  - id: tramites
+    targets:
+      - url: https://www.tramites.go.cr/
+  - id: academia
+    targets:
+      - url: https://www.kerwa.ucr.ac.cr/
+      - url: https://repositorio.una.ac.cr/
+      - url: https://kimuk.conare.ac.cr/

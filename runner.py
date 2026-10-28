@@ -48,6 +48,7 @@ from core.crawler_manager import CrawlerManager
 from core.bootstrap_sources import bootstrap
 from config.runtime import validate_data_root, RuntimeConfigError
 from core.utils.round_robin import RoundRobinScheduler
+from core.client_provider import provider_for
 
 # -------------------------------------------------
 # Utilidades locales
@@ -106,7 +107,7 @@ def extract_country_from_filename(filename):
 def list_crawlers(client, country):
     crawlers_dir = os.path.join(
         CLIENTS_DIR,
-        client,
+        provider_for(client, "crawler"),
         "crawlers",
         country
     )
@@ -239,6 +240,30 @@ def command(args):
     if args.command == "validate-config":
         print("Configuration valid and data root writable")
         return
+    if args.command == "batch":
+        from core.batch import BatchStore
+        store = BatchStore(args.client, args.country)
+        try:
+            if args.batch_command == "import":
+                result = store.import_manifest(args.manifest)
+            elif args.batch_command == "simulate":
+                result = store.simulate()
+            elif args.batch_command == "resolve":
+                status = store.resolve(args.target_id, args.url)
+                result = {"target_id": args.target_id, "estado": status}
+            elif args.batch_command == "run":
+                result = store.run(args.target_id)
+            elif args.batch_command == "history":
+                result = store.history(args.target_id)
+            elif args.batch_command == "identify":
+                status = store.identify(args.target_id, args.numero_ley, args.titulo_buscado)
+                result = {"target_id": args.target_id, "estado": status}
+            else:
+                raise ValueError("se requiere un subcomando batch")
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+        finally:
+            store.close()
+        return
     if args.command == "plan":
         url_file = os.path.join(CLIENTS_DIR, args.client, f"{args.country}-urls.txt")
         path = bootstrap(args.client, args.country, url_file)
@@ -280,6 +305,24 @@ def main():
     sub.add_parser("status")
     plan_cmd = sub.add_parser("plan"); plan_cmd.add_argument("--client", required=True); plan_cmd.add_argument("--country", required=True)
     reset = sub.add_parser("reset-state"); reset.add_argument("--client", required=True); reset.add_argument("--country", required=True); reset.add_argument("--yes", action="store_true")
+    batch = sub.add_parser("batch", help="adquisición por manifiesto, aislada de Discovery")
+    batch.add_argument("--client", default="veredictum")
+    batch.add_argument("--country", default="ti")
+    batch_sub = batch.add_subparsers(dest="batch_command", required=True)
+    batch_import = batch_sub.add_parser("import", help="registrar objetivos sin usar la red")
+    batch_import.add_argument("--manifest", required=True)
+    batch_sub.add_parser("simulate", help="mostrar acciones sin usar la red")
+    batch_resolve = batch_sub.add_parser("resolve", help="asociar una URL oficial a un objetivo pendiente")
+    batch_resolve.add_argument("--target-id", required=True)
+    batch_resolve.add_argument("--url", required=True)
+    batch_run = batch_sub.add_parser("run", help="verificar y adquirir documentos")
+    batch_run.add_argument("--target-id")
+    batch_history = batch_sub.add_parser("history", help="ver historial de un objetivo")
+    batch_history.add_argument("--target-id", required=True)
+    batch_identify = batch_sub.add_parser("identify", help="completar identidad de norma de un objetivo")
+    batch_identify.add_argument("--target-id", required=True)
+    batch_identify.add_argument("--numero-ley")
+    batch_identify.add_argument("--titulo-buscado")
     args = parser.parse_args()
     try:
         command(args) if args.command else run()
